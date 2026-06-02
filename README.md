@@ -5,7 +5,7 @@
 This plugin enables some functions that is missing from Emby when using .strm files. Most of the functions can also be used on regular media types. 
 
 ## Media info extract
-This plugin probes selected libraries to extract the media information. 
+This plugin probes movies and episodes in selected libraries to extract the media information. 
 For example: resolution, playtime, audio-codec, subtitles, etc.
 
 ## Intro dectect
