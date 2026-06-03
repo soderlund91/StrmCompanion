@@ -80,5 +80,23 @@ namespace StrmCompanion.IntroDetection
             if (Directory.Exists(dir))
                 Directory.Delete(dir, recursive: true);
         }
+
+        /// <summary>Returns all series that have at least one cached fingerprint file.</summary>
+        public List<(long SeriesId, int EpisodeCount)> ListAll()
+        {
+            var result = new List<(long, int)>();
+            if (!Directory.Exists(_basePath))
+                return result;
+
+            foreach (var dir in Directory.GetDirectories(_basePath))
+            {
+                if (!long.TryParse(Path.GetFileName(dir), out var seriesId))
+                    continue;
+                var count = Directory.GetFiles(dir, "*.json").Length;
+                if (count > 0)
+                    result.Add((seriesId, count));
+            }
+            return result;
+        }
     }
 }

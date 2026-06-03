@@ -50,6 +50,12 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         var mergeJobId    = null;
         var mergePoll     = null;
 
+        // Queue state
+        var queueItems        = [];   // { seriesId, seasonId, seriesName, seasonName, status }
+        var queueRunning      = false;
+        var currentQueueIndex = -1;
+        var allEpisodeResults = [];   // { item, results:{}, status }
+
         // ============================================================= TAB SWITCHING
         view.querySelectorAll('.sc-main-tab-btn').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -58,14 +64,12 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 view.querySelectorAll('.sc-main-tab-btn').forEach(function (b) {
                     b.classList.toggle('active', b === btn);
                 });
-                view.querySelector('#scMainIntro').style.display    = target === 'intro'    ? '' : 'none';
-                view.querySelector('#scMainMedia').style.display    = target === 'media'    ? '' : 'none';
-                view.querySelector('#scMainMerge').style.display    = target === 'merge'    ? '' : 'none';
-                view.querySelector('#scMainSettings').style.display = target === 'settings' ? '' : 'none';
+                view.querySelector('#scMainIntro').style.display = target === 'intro' ? '' : 'none';
+                view.querySelector('#scMainMedia').style.display = target === 'media' ? '' : 'none';
+                view.querySelector('#scMainMerge').style.display = target === 'merge' ? '' : 'none';
 
-                if (target === 'media')    loadMediaStats();
-                if (target === 'merge')    loadMergeSettings();
-                if (target === 'settings') loadSettings();
+                if (target === 'media') { loadMediaStats(); loadMediaInfoSettings(); }
+                if (target === 'merge') loadMergeSettings();
             });
         });
 
@@ -94,13 +98,13 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         function loadSeasons(seriesId) {
             var selSeason = view.querySelector('#selectSeason');
             selSeason.disabled = true;
-            view.querySelector('#btnRun').disabled = true;
+            view.querySelector('#btnAddToQueue').disabled = true;
             selSeason.innerHTML = '<option value="">- Loading seasons... -</option>';
             hideMarkers();
 
             apiGet('strmcompanion/series/' + seriesId + '/seasons')
                 .then(function (seasons) {
-                    selSeason.innerHTML = '<option value="">Entire series (all seasons)</option>';
+                    selSeason.innerHTML = '<option value="">All seasons</option>';
                     (seasons || []).forEach(function (s) {
                         var opt = document.createElement('option');
                         opt.value = s.Id;
@@ -108,7 +112,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                         selSeason.appendChild(opt);
                     });
                     selSeason.disabled = false;
-                    view.querySelector('#btnRun').disabled = false;
+                    view.querySelector('#btnAddToQueue').disabled = false;
                 })
                 .catch(function (err) {
                     console.error('StrmCompanion: seasons error', err);
@@ -118,7 +122,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         // ---- markers ----
         function hideMarkers() {
-            view.querySelector('#markersSection').style.display = 'none';
+            view.querySelector('#markersExpandWrap').style.display = 'none';
             currentSeasonId = null;
         }
 
@@ -128,7 +132,9 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             } else {
                 currentSeasonId = id;
             }
-            var section   = view.querySelector('#markersSection');
+            var wrap    = view.querySelector('#markersExpandWrap');
+            var hdr     = view.querySelector('#markersHeader');
+            var expBody = view.querySelector('#markersExpandBody');
             var loading   = view.querySelector('#markersLoading');
             var table     = view.querySelector('#markersTable');
             var tbody     = view.querySelector('#markersBody');
@@ -139,7 +145,11 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             btnDelSeasonMarkers.style.display = seriesView ? 'none' : '';
             btnDelSeasonAll.style.display     = seriesView ? 'none' : '';
 
-            section.style.display = '';
+            wrap.style.display = '';
+            if (!hdr.classList.contains('sc-open')) {
+                hdr.classList.add('sc-open');
+                expBody.style.display = '';
+            }
             loading.style.display = '';
             loading.textContent = 'Loading markers...';
             table.style.display = 'none';
@@ -196,6 +206,266 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             }
         }
 
+        function loadFingerprintDatabase() {
+            var loading = view.querySelector('#fpDbLoading');
+            var empty   = view.querySelector('#fpDbEmpty');
+            var table   = view.querySelector('#fpDbTable');
+            var tbody   = view.querySelector('#fpDbTbody');
+
+            loading.style.display = '';
+            empty.style.display   = 'none';
+            table.style.display   = 'none';
+            tbody.innerHTML       = '';
+
+            apiGet('strmcompanion/fingerprints')
+                .then(function (rows) {
+                    loading.style.display = 'none';
+                    if (!rows || rows.length === 0) {
+                        empty.style.display = '';
+                        return;
+                    }
+                    rows.forEach(function (row) {
+                        var tr = document.createElement('tr');
+                        tr.innerHTML =
+                            '<td>' + escapeHtml(row.SeriesName) + '</td>' +
+                            '<td style="text-align:center;">' + row.EpisodeCount + '</td>' +
+                            '<td style="text-align:right;">' +
+                                '<button class="sc-fpdb-del-fp emby-button sc-btn-danger" data-sid="' + row.SeriesId + '" style="margin-right:6px;">Delete fingerprints</button>' +
+                                '<button class="sc-fpdb-del-all emby-button sc-btn-danger" data-sid="' + row.SeriesId + '">Delete all</button>' +
+                            '</td>';
+                        tbody.appendChild(tr);
+                    });
+                    table.style.display = '';
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion: fingerprint database load error', err);
+                    loading.textContent = 'Could not load fingerprint database.';
+                    loading.style.display = '';
+                });
+        }
+
+        function confirmDelete(msg, path, afterFn) {
+            if (!confirm(msg)) return;
+            apiDelete(path)
+                .then(afterFn)
+                .catch(function (err) {
+                    console.error('StrmCompanion: delete error', err);
+                    window.Dashboard.alert('Could not delete.');
+                });
+        }
+
+        // ---- queue management ----
+        function renderQueue() {
+            var tbody   = view.querySelector('#queueBody');
+            var table   = view.querySelector('#queueTable');
+            var empty   = view.querySelector('#queueEmpty');
+            var btnRun  = view.querySelector('#btnRunQueue');
+            var btnClear = view.querySelector('#btnClearQueue');
+
+            if (queueItems.length === 0) {
+                table.style.display = 'none';
+                empty.style.display = '';
+                btnRun.disabled  = true;
+                btnClear.disabled = true;
+                return;
+            }
+
+            var hasPending = queueItems.some(function (it) { return it.status === 'pending'; });
+            table.style.display  = '';
+            empty.style.display  = 'none';
+            btnClear.disabled    = queueRunning;
+            btnRun.disabled      = queueRunning || !hasPending;
+
+            tbody.innerHTML = '';
+            queueItems.forEach(function (item, idx) {
+                var tr = document.createElement('tr');
+                if (item.status === 'running') tr.classList.add('sc-queue-running');
+
+                var badge;
+                if (item.status === 'pending') {
+                    badge = '<span class="sc-badge-none">In queue</span>';
+                } else if (item.status === 'running') {
+                    badge = '<span class="sc-badge-ok" style="display:inline-flex;align-items:center;gap:5px;">' +
+                            '<span class="sc-spinner" style="width:10px;height:10px;border-width:2px;flex-shrink:0;"></span>Running</span>';
+                } else if (item.status === 'done') {
+                    badge = '<span class="sc-badge-ok">Complete</span>';
+                } else if (item.status === 'failed') {
+                    badge = '<span class="sc-badge-err">Failed</span>';
+                } else {
+                    badge = '<span class="sc-badge-none">Cancelled</span>';
+                }
+
+                var removeBtn = (item.status === 'pending' && !queueRunning)
+                    ? '<button class="sc-queue-remove emby-button sc-btn-danger" data-idx="' + idx + '" style="font-size:11px;padding:2px 8px;white-space:nowrap;">Delete from queue</button>'
+                    : '';
+
+                tr.innerHTML =
+                    '<td>' + (idx + 1) + '</td>' +
+                    '<td>' + escapeHtml(item.seriesName) + '</td>' +
+                    '<td>' + escapeHtml(item.seasonName || 'All seasons') + '</td>' +
+                    '<td>' + badge + '</td>' +
+                    '<td>' + removeBtn + '</td>';
+                tbody.appendChild(tr);
+            });
+        }
+
+        function addToQueue() {
+            var seriesSel = view.querySelector('#selectSeries');
+            var seasonSel = view.querySelector('#selectSeason');
+            var seriesId = parseInt(seriesSel.value, 10);
+            if (!seriesId) return;
+            var seasonId   = seasonSel.value ? parseInt(seasonSel.value, 10) : null;
+            var seriesName = seriesSel.options[seriesSel.selectedIndex].textContent;
+            var seasonName = seasonId ? seasonSel.options[seasonSel.selectedIndex].textContent : null;
+
+            var duplicate = queueItems.some(function (it) {
+                return it.seriesId === seriesId && it.seasonId === seasonId && it.status === 'pending';
+            });
+            if (duplicate) return;
+
+            queueItems.push({ seriesId: seriesId, seasonId: seasonId, seriesName: seriesName, seasonName: seasonName, status: 'pending' });
+            renderQueue();
+        }
+
+        function removeFromQueue(idx) {
+            if (queueRunning) return;
+            queueItems.splice(idx, 1);
+            renderQueue();
+        }
+
+        function clearQueue() {
+            if (queueRunning) return;
+            queueItems = [];
+            renderQueue();
+        }
+
+        function runQueue() {
+            var hasPending = queueItems.some(function (it) { return it.status === 'pending'; });
+            if (!hasPending || queueRunning) return;
+            queueRunning      = true;
+            currentQueueIndex = 0;
+            allEpisodeResults = [];
+            processNextQueueItem();
+        }
+
+        function processNextQueueItem() {
+            while (currentQueueIndex < queueItems.length &&
+                   queueItems[currentQueueIndex].status !== 'pending') {
+                currentQueueIndex++;
+            }
+
+            if (currentQueueIndex >= queueItems.length) {
+                queueRunning = false;
+                renderQueue();
+                showQueueResults();
+                return;
+            }
+
+            var item = queueItems[currentQueueIndex];
+            item.status = 'running';
+            renderQueue();
+            showQueueProgress(item, currentQueueIndex + 1, queueItems.length);
+
+            var body = { SeriesId: item.seriesId };
+            if (item.seasonId) body.SeasonId = item.seasonId;
+
+            apiPost('strmcompanion/intro/run', body)
+                .then(function (resp) {
+                    introJobId = resp.JobId;
+                    startIntroPoll();
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion: run failed', err);
+                    item.status = 'failed';
+                    allEpisodeResults.push({ item: item, results: {}, status: 'failed' });
+                    renderQueue();
+                    if (queueRunning) {
+                        currentQueueIndex++;
+                        processNextQueueItem();
+                    } else {
+                        showQueueResults();
+                    }
+                });
+        }
+
+        function showQueueView() {
+            view.querySelector('#queueAddForm').style.display         = '';
+            view.querySelector('#queueSection').style.display          = '';
+            view.querySelector('#introProgressSection').style.display  = 'none';
+            view.querySelector('#introResultsSection').style.display   = 'none';
+            stopIntroPoll();
+        }
+
+        function showQueueProgress(item, pos, total) {
+            view.querySelector('#queueAddForm').style.display         = 'none';
+            view.querySelector('#introProgressSection').style.display  = '';
+            view.querySelector('#introResultsSection').style.display   = 'none';
+
+            var label = item.seriesName + ' · ' + (item.seasonName || 'All seasons');
+            view.querySelector('#introProgressTitle').textContent    = 'Processing (' + pos + ' / ' + total + ')';
+            view.querySelector('#introProgressSubtitle').textContent = label;
+            view.querySelector('#introProgressBar').style.width      = '0%';
+            view.querySelector('#introStatusText').textContent       = 'Preparing...';
+        }
+
+        function showQueueResults() {
+            view.querySelector('#queueAddForm').style.display         = 'none';
+            view.querySelector('#introProgressSection').style.display  = 'none';
+            view.querySelector('#introResultsSection').style.display   = '';
+
+            var titleEl   = view.querySelector('#introResultTitle');
+            var summaryEl = view.querySelector('#introResultSummary');
+            var tbody     = view.querySelector('#introResultRows');
+
+            var doneCount   = allEpisodeResults.filter(function (r) { return r.status === 'done'; }).length;
+            var failedCount = allEpisodeResults.filter(function (r) { return r.status === 'failed'; }).length;
+            var cancCount   = allEpisodeResults.filter(function (r) { return r.status === 'cancelled'; }).length;
+
+            if (doneCount > 0) {
+                titleEl.textContent = 'Done!';
+                titleEl.style.color = '#00a4dc';
+            } else if (cancCount > 0 && failedCount === 0) {
+                titleEl.textContent = 'Cancelled';
+                titleEl.style.color = '#aaa';
+            } else {
+                titleEl.textContent = 'Failed';
+                titleEl.style.color = '#cc0000';
+            }
+
+            var parts = [];
+            if (doneCount > 0)   parts.push(doneCount + ' completed');
+            if (failedCount > 0) parts.push(failedCount + ' failed');
+            if (cancCount > 0)   parts.push(cancCount + ' cancelled');
+            summaryEl.textContent = parts.join(', ') + '.';
+
+            tbody.innerHTML = '';
+            allEpisodeResults.forEach(function (r) {
+                var seriesLabel = r.item.seriesName + ' · ' + (r.item.seasonName || 'All seasons');
+                var results = r.results || {};
+                var keys = Object.keys(results);
+                if (keys.length === 0) {
+                    var tr = document.createElement('tr');
+                    var statusMsg = r.status === 'cancelled' ? 'Cancelled' : r.status === 'failed' ? 'Failed' : '';
+                    tr.innerHTML =
+                        '<td>' + escapeHtml(seriesLabel) + '</td>' +
+                        '<td>–</td>' +
+                        '<td><span class="sc-badge-none">' + escapeHtml(statusMsg) + '</span></td>';
+                    tbody.appendChild(tr);
+                } else {
+                    keys.forEach(function (epId) {
+                        var msg = results[epId] || '';
+                        var isError = msg === 'Fingerprinting failed' || msg === 'No intro found' || msg.indexOf('failed') !== -1;
+                        var tr = document.createElement('tr');
+                        tr.innerHTML =
+                            '<td>' + escapeHtml(seriesLabel) + '</td>' +
+                            '<td>' + escapeHtml(String(epId)) + '</td>' +
+                            '<td><span class="' + (isError ? 'sc-badge-none' : 'sc-badge-ok') + '">' + escapeHtml(msg) + '</span></td>';
+                        tbody.appendChild(tr);
+                    });
+                }
+            });
+        }
+
         // ---- intro job polling ----
         function startIntroPoll() {
             stopIntroPoll();
@@ -212,58 +482,23 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                     view.querySelector('#introStatusText').textContent   = job.CurrentActivity || job.Status || '';
                     if (job.Status === 'Completed' || job.Status === 'Failed' || job.Status === 'Cancelled') {
                         stopIntroPoll();
-                        showIntroResults(job);
+                        var item = queueItems[currentQueueIndex];
+                        if (item) {
+                            item.status = job.Status === 'Completed' ? 'done' :
+                                          job.Status === 'Failed'    ? 'failed' : 'cancelled';
+                            allEpisodeResults.push({ item: item, results: job.EpisodeResults || {}, status: item.status });
+                        }
+                        if (job.Status === 'Cancelled' || !queueRunning) {
+                            queueRunning = false;
+                            renderQueue();
+                            showQueueResults();
+                        } else {
+                            currentQueueIndex++;
+                            processNextQueueItem();
+                        }
                     }
                 })
                 .catch(function () { stopIntroPoll(); });
-        }
-
-        function showIntroProgress() {
-            view.querySelector('#selectionForm').style.display       = 'none';
-            view.querySelector('#introProgressSection').style.display = '';
-            view.querySelector('#introResultsSection').style.display  = 'none';
-        }
-
-        function showIntroResults(job) {
-            view.querySelector('#introProgressSection').style.display = 'none';
-            view.querySelector('#introResultsSection').style.display  = '';
-            var title   = view.querySelector('#introResultTitle');
-            var summary = view.querySelector('#introResultSummary');
-            var tbody   = view.querySelector('#introResultRows');
-
-            if (job.Status === 'Completed') {
-                title.textContent = 'Done!';
-                title.style.color = '#00a4dc';
-                summary.textContent = 'Intro markers saved to Emby.';
-            } else if (job.Status === 'Failed') {
-                title.textContent = 'Failed';
-                title.style.color = '#cc0000';
-                summary.textContent = job.ErrorMessage || 'An unknown error occurred.';
-            } else {
-                title.textContent = 'Cancelled';
-                title.style.color = '#aaa';
-                summary.textContent = '';
-            }
-
-            tbody.innerHTML = '';
-            var results = job.EpisodeResults || {};
-            Object.keys(results).forEach(function (epId) {
-                var tr = document.createElement('tr');
-                tr.innerHTML =
-                    '<td>' + escapeHtml(String(epId)) + '</td>' +
-                    '<td>' + escapeHtml(results[epId]) + '</td>';
-                tbody.appendChild(tr);
-            });
-        }
-
-        function confirmDelete(msg, path, afterFn) {
-            if (!confirm(msg)) return;
-            apiDelete(path)
-                .then(afterFn)
-                .catch(function (err) {
-                    console.error('StrmCompanion: delete error', err);
-                    window.Dashboard.alert('Could not delete.');
-                });
         }
 
         // ---- intro event wiring ----
@@ -274,7 +509,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 var sel = view.querySelector('#selectSeason');
                 sel.innerHTML = '<option value="">- Select a series first -</option>';
                 sel.disabled = true;
-                view.querySelector('#btnRun').disabled = true;
+                view.querySelector('#btnAddToQueue').disabled = true;
                 return;
             }
             loadSeasons(currentSeriesId);
@@ -305,8 +540,8 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         view.querySelector('#btnDeleteSeasonAll').addEventListener('click', function () {
             if (!currentSeasonId) return;
-            confirmDelete('Delete ALL markers and fingerprint cache for this season?',
-                'strmcompanion/intro/all/season/' + currentSeasonId, reloadCurrentMarkers);
+            confirmDelete('Clear the fingerprint cache for this season? Intro markers will be kept.',
+                'strmcompanion/fingerprints/season/' + currentSeasonId, reloadCurrentMarkers);
         });
 
         view.querySelector('#btnDeleteSeriesMarkers').addEventListener('click', function () {
@@ -317,85 +552,89 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         view.querySelector('#btnDeleteSeriesAll').addEventListener('click', function () {
             if (!currentSeriesId) return;
-            confirmDelete('Delete ALL markers and fingerprint cache for the entire series?',
-                'strmcompanion/intro/all/series/' + currentSeriesId, reloadCurrentMarkers);
+            confirmDelete('Clear the fingerprint cache for the entire series? Intro markers will be kept.',
+                'strmcompanion/fingerprints/series/' + currentSeriesId, reloadCurrentMarkers);
         });
 
-        view.querySelector('#btnRun').addEventListener('click', function () {
-            var seriesId = parseInt(view.querySelector('#selectSeries').value, 10);
-            if (!seriesId) return;
-            var seasonVal = view.querySelector('#selectSeason').value;
-            var body = { SeriesId: seriesId };
-            if (seasonVal) body.SeasonId = parseInt(seasonVal, 10);
-            apiPost('strmcompanion/intro/run', body)
-                .then(function (r) { introJobId = r.JobId; showIntroProgress(); startIntroPoll(); })
-                .catch(function (err) {
-                    console.error('StrmCompanion: run failed', err);
-                    window.Dashboard.alert('Could not start the job.');
-                });
+        view.querySelector('#queueBody').addEventListener('click', function (e) {
+            var btn = e.target.closest('.sc-queue-remove');
+            if (!btn) return;
+            removeFromQueue(parseInt(btn.getAttribute('data-idx'), 10));
         });
+
+        view.querySelector('#fpDbTbody').addEventListener('click', function (e) {
+            var btn = e.target.closest('.sc-fpdb-del-fp, .sc-fpdb-del-all');
+            if (!btn) return;
+            var sid  = btn.getAttribute('data-sid');
+            var all  = btn.classList.contains('sc-fpdb-del-all');
+            var msg  = all
+                ? 'Delete ALL intro markers AND fingerprint cache for this series?'
+                : 'Delete the fingerprint cache for this series?';
+            var path = all
+                ? 'strmcompanion/intro/all/series/' + sid
+                : 'strmcompanion/fingerprints/series/' + sid;
+            confirmDelete(msg, path, loadFingerprintDatabase);
+        });
+
+        view.querySelector('#btnRefreshFpDb').addEventListener('click', loadFingerprintDatabase);
+
+        view.querySelector('#btnAddToQueue').addEventListener('click', addToQueue);
+        view.querySelector('#btnRunQueue').addEventListener('click', runQueue);
+        view.querySelector('#btnClearQueue').addEventListener('click', clearQueue);
 
         view.querySelector('#btnCancel').addEventListener('click', function () {
-            if (!introJobId) return;
-            apiDelete('strmcompanion/intro/job/' + introJobId);
+            queueRunning = false;
+            if (introJobId) apiDelete('strmcompanion/intro/job/' + introJobId);
             stopIntroPoll();
+            var item = queueItems[currentQueueIndex];
+            if (item && item.status === 'running') {
+                item.status = 'cancelled';
+                allEpisodeResults.push({ item: item, results: {}, status: 'cancelled' });
+            }
             introJobId = null;
-            showIntroResults({ Status: 'Cancelled', EpisodeResults: {} });
+            renderQueue();
+            showQueueResults();
         });
 
-        view.querySelector('#btnReset').addEventListener('click', function () {
+        view.querySelector('#btnBackToQueue').addEventListener('click', function () {
             introJobId = null;
             stopIntroPoll();
             view.querySelector('#introProgressBar').style.width = '0%';
             view.querySelector('#introStatusText').textContent  = 'Preparing...';
-            view.querySelector('#selectionForm').style.display       = '';
-            view.querySelector('#introProgressSection').style.display = 'none';
-            view.querySelector('#introResultsSection').style.display  = 'none';
-            reloadCurrentMarkers();
+            showQueueView();
         });
 
         // ============================================================= MEDIA INFO
 
         function loadMediaStats() {
             var loading = view.querySelector('#statsLoading');
-            var bar     = view.querySelector('#statsBar');
             var errEl   = view.querySelector('#statsError');
-            var warnEl  = view.querySelector('#noLibrariesWarn');
 
-            // Stats bar is always visible (shows – placeholders); spinner shows during fetch
             loading.style.display = '';
             errEl.style.display   = 'none';
 
-            // Fetch settings and stats in parallel
-            Promise.all([
-                apiGet('strmcompanion/mediainfo/settings'),
-                apiGet('strmcompanion/mediainfo/stats')
-            ]).then(function (results) {
-                var cfg   = results[0];
-                var stats = results[1];
+            apiGet('strmcompanion/mediainfo/stats')
+                .then(function (stats) {
+                    loading.style.display = 'none';
 
-                loading.style.display = 'none';
+                    view.querySelector('#statMoviesTotal').textContent     = stats.TotalMovies    != null ? stats.TotalMovies    : '–';
+                    view.querySelector('#statMoviesScanned').textContent   = stats.ScannedMovies  != null ? stats.ScannedMovies  : '–';
+                    view.querySelector('#statEpisodesTotal').textContent   = stats.TotalEpisodes  != null ? stats.TotalEpisodes  : '–';
+                    view.querySelector('#statEpisodesScanned').textContent = stats.ScannedEpisodes != null ? stats.ScannedEpisodes : '–';
 
-                var hasLibs = cfg.MediaInfoLibraryIds && cfg.MediaInfoLibraryIds.length > 0;
-                warnEl.style.display = hasLibs ? 'none' : '';
+                    var mp = view.querySelector('#statMoviesPending');
+                    mp.textContent = stats.PendingMovies != null ? stats.PendingMovies : '–';
+                    mp.classList.toggle('has-pending', stats.PendingMovies > 0);
 
-                view.querySelector('#statMoviesTotal').textContent     = stats.TotalMovies    != null ? stats.TotalMovies    : '–';
-                view.querySelector('#statMoviesScanned').textContent   = stats.ScannedMovies  != null ? stats.ScannedMovies  : '–';
-                view.querySelector('#statEpisodesTotal').textContent   = stats.TotalEpisodes  != null ? stats.TotalEpisodes  : '–';
-                view.querySelector('#statEpisodesScanned').textContent = stats.ScannedEpisodes != null ? stats.ScannedEpisodes : '–';
-
-                var mp = view.querySelector('#statMoviesPending');
-                mp.textContent = stats.PendingMovies != null ? stats.PendingMovies : '–';
-                mp.classList.toggle('has-pending', stats.PendingMovies > 0);
-
-                var ep = view.querySelector('#statEpisodesPending');
-                ep.textContent = stats.PendingEpisodes != null ? stats.PendingEpisodes : '–';
-                ep.classList.toggle('has-pending', stats.PendingEpisodes > 0);
-            }).catch(function (err) {
-                console.error('StrmCompanion MediaInfo: stats error', err);
-                loading.style.display = 'none';
-                errEl.style.display   = '';
-            });
+                    var ep = view.querySelector('#statEpisodesPending');
+                    ep.textContent = stats.PendingEpisodes != null ? stats.PendingEpisodes : '–';
+                    ep.classList.toggle('has-pending', stats.PendingEpisodes > 0);
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion MediaInfo: stats error', err);
+                    loading.style.display = 'none';
+                    errEl.style.display   = '';
+                });
         }
 
         function startMediaScan() {
@@ -455,12 +694,14 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
             tbody.innerHTML = '';
             var results = job.EpisodeResults || {};
+            var titles  = job.ItemTitles    || {};
             Object.keys(results).forEach(function (id) {
-                var msg = results[id] || '';
+                var msg   = results[id] || '';
+                var title = titles[id] || id;
                 var isError = msg.toLowerCase().indexOf('error') === 0 || msg.toLowerCase().indexOf('no streams') === 0;
                 var tr = document.createElement('tr');
                 tr.innerHTML =
-                    '<td>' + escapeHtml(id) + '</td>' +
+                    '<td>' + escapeHtml(title) + '</td>' +
                     '<td><span class="' + (isError ? 'sc-badge-err' : 'sc-badge-ok') + '">' + escapeHtml(msg) + '</span></td>';
                 tbody.appendChild(tr);
             });
@@ -490,8 +731,23 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         // ============================================================= SETTINGS
 
-        function loadSettings() {
-            // Intro Detection settings
+        function wireExpand(headerId, bodyId, onOpen) {
+            var hdr  = view.querySelector(headerId);
+            var body = view.querySelector(bodyId);
+            if (!hdr || !body) return;
+            hdr.addEventListener('click', function () {
+                var open = hdr.classList.toggle('sc-open');
+                body.style.display = open ? '' : 'none';
+                if (open && onOpen) onOpen();
+            });
+        }
+        wireExpand('#introSettingsHeader', '#introSettingsBody', loadIntroSettings);
+        wireExpand('#mediaSettingsHeader', '#mediaSettingsBody', loadMediaInfoSettings);
+        wireExpand('#mergeSettingsHeader', '#mergeSettingsBody');
+        wireExpand('#markersHeader', '#markersExpandBody');
+        wireExpand('#fpDbHeader', '#fpDbBody', loadFingerprintDatabase);
+
+        function loadIntroSettings() {
             apiGet('strmcompanion/settings')
                 .then(function (cfg) {
                     view.querySelector('#txtFingerprintPath').value    = cfg.FingerprintDataPath || '';
@@ -504,16 +760,21 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                     var eff = view.querySelector('#lblEffectivePath');
                     if (eff) eff.textContent = 'Current path: ' + (cfg.EffectiveFingerprintPath || '(unknown)');
                 })
-                .catch(function (err) { console.error('StrmCompanion: settings load error', err); });
+                .catch(function (err) { console.error('StrmCompanion: intro settings load error', err); });
+        }
 
-            // Media Info settings
+        function loadMediaInfoSettings() {
+            var warnEl = view.querySelector('#noLibrariesWarn');
             apiGet('strmcompanion/mediainfo/settings')
                 .then(function (cfg) {
+                    var hasLibs = cfg.MediaInfoLibraryIds && cfg.MediaInfoLibraryIds.length > 0;
+                    if (warnEl) warnEl.style.display = hasLibs ? 'none' : '';
+
                     view.querySelector('#numConcurrency').value = cfg.MediaInfoConcurrency || 2;
                     view.querySelector('#chkAutoScan').checked  = !!cfg.MediaInfoAutoScan;
-                    var selectedIds = (cfg.MediaInfoLibraryIds || '').split(',')
+                    var ids = (cfg.MediaInfoLibraryIds || '').split(',')
                         .map(function (s) { return s.trim(); }).filter(Boolean);
-                    renderLibraries(selectedIds);
+                    renderLibraries(ids);
                 })
                 .catch(function (err) { console.error('StrmCompanion: media info settings load error', err); });
         }
@@ -546,100 +807,111 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 });
         }
 
-        function saveSettings() {
-            // Save intro detection settings
-            var introBody = {
-                FingerprintDataPath:        view.querySelector('#txtFingerprintPath').value.trim(),
-                FfmpegPathOverride:          view.querySelector('#txtFfmpegPath').value.trim(),
-                FingerprintDurationMinutes:  parseInt(view.querySelector('#numFingerprintMinutes').value, 10),
-                MinimumIntroLengthSeconds:   parseInt(view.querySelector('#numMinIntroLength').value, 10),
+        function saveIntroSettings() {
+            var body = {
+                FingerprintDataPath:           view.querySelector('#txtFingerprintPath').value.trim(),
+                FfmpegPathOverride:             view.querySelector('#txtFfmpegPath').value.trim(),
+                FingerprintDurationMinutes:     parseInt(view.querySelector('#numFingerprintMinutes').value, 10),
+                MinimumIntroLengthSeconds:      parseInt(view.querySelector('#numMinIntroLength').value, 10),
                 HammingDistanceThreshold:       parseInt(view.querySelector('#numHamming').value, 10),
                 SilenceThresholdDb:             view.querySelector('#txtSilenceDb').value.trim(),
                 SilenceDurationSeconds:         0.5,
                 OverwriteExistingIntroMarkers:  view.querySelector('#chkOverwriteMarkers').checked
             };
+            apiPost('strmcompanion/settings', body)
+                .then(function (cfg) {
+                    var eff = view.querySelector('#lblEffectivePath');
+                    if (eff && cfg) eff.textContent = 'Current path: ' + (cfg.EffectiveFingerprintPath || '(unknown)');
+                    var msg = view.querySelector('#introSettingsSavedMsg');
+                    msg.style.display = '';
+                    setTimeout(function () { msg.style.display = 'none'; }, 2500);
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion: save intro settings error', err);
+                    window.Dashboard.alert('Could not save settings.');
+                });
+        }
 
-            // Save media info settings
+        function saveMediaSettings() {
             var checkboxes = view.querySelectorAll('#libraryList input[type=checkbox]:checked');
             var selectedIds = Array.prototype.slice.call(checkboxes).map(function (cb) { return cb.value; }).join(',');
-            var mediaBody = {
-                MediaInfoLibraryIds: selectedIds,
+            var body = {
+                MediaInfoLibraryIds:  selectedIds,
                 MediaInfoConcurrency: parseInt(view.querySelector('#numConcurrency').value, 10) || 2,
                 MediaInfoAutoScan:    view.querySelector('#chkAutoScan').checked
             };
-
-            Promise.all([
-                apiPost('strmcompanion/settings', introBody),
-                apiPost('strmcompanion/mediainfo/settings', mediaBody)
-            ])
-            .then(function (results) {
-                var cfg = results[0];
-                var eff = view.querySelector('#lblEffectivePath');
-                if (eff && cfg) eff.textContent = 'Current path: ' + (cfg.EffectiveFingerprintPath || '(unknown)');
-                var msg = view.querySelector('#settingsSavedMsg');
-                msg.style.display = '';
-                setTimeout(function () { msg.style.display = 'none'; }, 2500);
-            })
-            .catch(function (err) {
-                console.error('StrmCompanion: save settings error', err);
-                window.Dashboard.alert('Could not save settings.');
-            });
+            apiPost('strmcompanion/mediainfo/settings', body)
+                .then(function () {
+                    var warnEl = view.querySelector('#noLibrariesWarn');
+                    if (warnEl) warnEl.style.display = selectedIds ? 'none' : '';
+                    var msg = view.querySelector('#mediaSettingsSavedMsg');
+                    msg.style.display = '';
+                    setTimeout(function () { msg.style.display = 'none'; }, 2500);
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion: save media settings error', err);
+                    window.Dashboard.alert('Could not save settings.');
+                });
         }
 
-        view.querySelector('#btnSaveSettings').addEventListener('click', saveSettings);
+        view.querySelector('#btnSaveIntroSettings').addEventListener('click', saveIntroSettings);
+        view.querySelector('#btnSaveMediaSettings').addEventListener('click', saveMediaSettings);
 
         // ============================================================= MERGE VERSION
 
-        function loadMergeSettings() {
-            apiGet('strmcompanion/mergeversion/settings')
-                .then(function (cfg) {
-                    var savedIds = (cfg.MergeVersionLibraryIds || '').split(',')
-                        .map(function (s) { return s.trim(); }).filter(Boolean);
-                    var isGlobal = savedIds.length === 0;
-                    view.querySelector('#chkMergeGlobal').checked = isGlobal;
-                    renderMergeLibraries(savedIds, isGlobal);
+        function loadMergeLastRun() {
+            apiGet('strmcompanion/mergeversion/jobs')
+                .then(function (jobs) {
+                    var finished = (jobs || []).filter(function (j) {
+                        return j.Status === 'Completed' || j.Status === 'Cancelled' || j.Status === 'Failed';
+                    });
+                    if (finished.length === 0) return;
+
+                    var job     = finished[0];
+                    var results = job.EpisodeResults || {};
+                    var keys    = Object.keys(results);
+                    var found   = keys.length;
+                    var merged  = keys.filter(function (k) { return (results[k] || '').indexOf('Merged') === 0; }).length;
+                    var failed  = keys.filter(function (k) { return (results[k] || '').toLowerCase().indexOf('error') === 0; }).length;
+
+                    view.querySelector('#mergeStatFound').textContent  = found;
+                    view.querySelector('#mergeStatMerged').textContent = merged;
+
+                    var failEl = view.querySelector('#mergeStatFailed');
+                    failEl.textContent = failed;
+                    failEl.classList.toggle('has-pending', failed > 0);
+
+                    var ts = job.CompletedAt || job.StartedAt;
+                    var d  = ts ? new Date(ts) : null;
+                    var dateStr = d ? d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                    var statusLabel = job.Status === 'Completed' ? 'Completed' : job.Status === 'Cancelled' ? 'Cancelled' : 'Failed';
+                    view.querySelector('#mergeLastRunTime').textContent = dateStr ? dateStr + ' — ' + statusLabel : statusLabel;
+
+                    view.querySelector('#mergeLastRun').style.display = '';
                 })
-                .catch(function (err) { console.error('StrmCompanion MergeVersion: settings load error', err); });
+                .catch(function () {});
         }
 
-        function renderMergeLibraries(selectedIds, disableAll) {
-            var container = view.querySelector('#mergeLibraryList');
-            apiGet('strmcompanion/mergeversion/libraries')
-                .then(function (libraries) {
-                    container.innerHTML = '';
-                    if (!libraries || libraries.length === 0) {
-                        container.innerHTML = '<span style="color:#aaa;font-size:13px;">No libraries found.</span>';
-                        return;
-                    }
-                    libraries.forEach(function (lib) {
-                        var label = document.createElement('label');
-                        label.className = 'sc-library-item';
-                        var cb = document.createElement('input');
-                        cb.type     = 'checkbox';
-                        cb.value    = String(lib.Id);
-                        cb.checked  = !disableAll && selectedIds.indexOf(String(lib.Id)) !== -1;
-                        cb.disabled = disableAll;
-                        var span = document.createElement('span');
-                        span.textContent = lib.Name + (lib.CollectionType ? ' (' + lib.CollectionType + ')' : '');
-                        label.appendChild(cb);
-                        label.appendChild(span);
-                        container.appendChild(label);
-                    });
+        function loadMergeSettings() {
+            loadMergeLastRun();
+            apiGet('strmcompanion/mergeversion/settings')
+                .then(function (cfg) {
+                    view.querySelector('#selectMergeMoviesScope').value  = cfg.MergeMoviesScope || 'GlobalScope';
+                    view.querySelector('#selectMergeSeriesScope').value  = cfg.MergeSeriesScope || 'Disabled';
+                    view.querySelector('#chkMergeAutoDetect').checked    = !!cfg.MergeAutoDetect;
                 })
-                .catch(function () {
-                    container.innerHTML = '<span style="color:#cc4444;font-size:13px;">Failed to load libraries.</span>';
+                .catch(function (err) {
+                    console.error('StrmCompanion MergeVersion: load error', err);
                 });
         }
 
         function saveMergeSettings() {
-            var isGlobal = view.querySelector('#chkMergeGlobal').checked;
-            var selectedIds = '';
-            if (!isGlobal) {
-                var checkboxes = view.querySelectorAll('#mergeLibraryList input[type=checkbox]:checked');
-                selectedIds = Array.prototype.slice.call(checkboxes)
-                    .map(function (cb) { return cb.value; }).join(',');
-            }
-            apiPost('strmcompanion/mergeversion/settings', { MergeVersionLibraryIds: selectedIds })
+            var body = {
+                MergeMoviesScope: view.querySelector('#selectMergeMoviesScope').value,
+                MergeSeriesScope: view.querySelector('#selectMergeSeriesScope').value,
+                MergeAutoDetect:  view.querySelector('#chkMergeAutoDetect').checked
+            };
+            apiPost('strmcompanion/mergeversion/settings', body)
                 .then(function () {
                     var msg = view.querySelector('#mergeSavedMsg');
                     msg.style.display = '';
@@ -699,32 +971,44 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             var titleEl   = view.querySelector('#mergeResultTitle');
             var summaryEl = view.querySelector('#mergeResultSummary');
             var tbody     = view.querySelector('#mergeResultRows');
+            var results   = job.EpisodeResults || {};
+            var keys      = Object.keys(results);
+            var merged    = keys.filter(function (k) { return (results[k] || '').indexOf('Merged') === 0; }).length;
+            var failed    = keys.filter(function (k) { return (results[k] || '').toLowerCase().indexOf('error') === 0; }).length;
 
             if (job.Status === 'Completed') {
                 titleEl.textContent   = 'Merge complete';
                 titleEl.style.color   = '#00a4dc';
-                summaryEl.textContent = Object.keys(job.EpisodeResults || {}).length + ' group(s) processed.';
+                if (keys.length === 0) {
+                    summaryEl.textContent = 'No duplicates found — nothing to merge.';
+                } else {
+                    summaryEl.textContent = merged + ' item(s) merged' + (failed > 0 ? ', ' + failed + ' failed.' : '.');
+                }
             } else if (job.Status === 'Cancelled') {
                 titleEl.textContent   = 'Merge cancelled';
                 titleEl.style.color   = '#aaa';
-                summaryEl.textContent = '';
+                summaryEl.textContent = merged > 0 ? merged + ' item(s) merged before cancel.' : 'Cancelled before any merges.';
             } else {
                 titleEl.textContent   = 'Merge failed';
                 titleEl.style.color   = '#cc0000';
                 summaryEl.textContent = job.ErrorMessage || 'An error occurred.';
             }
 
+            var titles = job.ItemTitles || {};
             tbody.innerHTML = '';
-            var results = job.EpisodeResults || {};
-            Object.keys(results).forEach(function (id) {
+            keys.forEach(function (id) {
                 var msg     = results[id] || '';
                 var isError = msg.toLowerCase().indexOf('error') === 0;
+                var title   = titles[id] || id;
                 var tr = document.createElement('tr');
                 tr.innerHTML =
-                    '<td>' + escapeHtml(id) + '</td>' +
+                    '<td>' + escapeHtml(title) + '</td>' +
                     '<td><span class="' + (isError ? 'sc-badge-err' : 'sc-badge-ok') + '">' + escapeHtml(msg) + '</span></td>';
                 tbody.appendChild(tr);
             });
+
+            // Refresh the last-run stats card immediately
+            loadMergeLastRun();
         }
 
         function showMergeControls() {
@@ -733,14 +1017,6 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             view.querySelector('#mergeResultsSection').style.display  = 'none';
             mergeJobId = null;
         }
-
-        view.querySelector('#chkMergeGlobal').addEventListener('change', function () {
-            var isGlobal = this.checked;
-            view.querySelectorAll('#mergeLibraryList input[type=checkbox]').forEach(function (cb) {
-                cb.disabled = isGlobal;
-                if (isGlobal) cb.checked = false;
-            });
-        });
 
         view.querySelector('#btnSaveMergeSettings').addEventListener('click', saveMergeSettings);
         view.querySelector('#btnRunMerge').addEventListener('click', startMerge);
@@ -754,12 +1030,54 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         view.querySelector('#btnMergeReset').addEventListener('click', showMergeControls);
 
         // ============================================================= FOOTER
-        function initFooter() {
-            // Offset footer to the right of Emby's sidebar when present
+        function applyPluginTheme() {
+            var candidates = ['.skinHeader', '.mainDrawer', '.contentScrollSlider', 'body'];
+            var bg = null;
+            for (var i = 0; i < candidates.length; i++) {
+                var el = document.querySelector(candidates[i]);
+                if (!el) continue;
+                var c = getComputedStyle(el).backgroundColor;
+                if (c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)') { bg = c; break; }
+            }
+            var isDark = true;
+            if (bg) {
+                var m = bg.match(/\d+/g);
+                if (m) isDark = (parseInt(m[0]) * 0.299 + parseInt(m[1]) * 0.587 + parseInt(m[2]) * 0.114) < 128;
+            }
+            var root = document.documentElement;
+            if (isDark) {
+                root.style.setProperty('--plugin-popup-bg',     '#2a2a2a');
+                root.style.setProperty('--plugin-popup-bg2',    '#333333');
+                root.style.setProperty('--plugin-popup-color',  '#e8e8e8');
+                root.style.setProperty('--plugin-popup-muted',  '#aaaaaa');
+                root.style.setProperty('--plugin-popup-border', 'rgba(255,255,255,0.12)');
+                root.style.setProperty('--plugin-popup-hover',  'rgba(255,255,255,0.08)');
+                root.style.setProperty('--plugin-popup-badge',  'rgba(255,255,255,0.1)');
+                root.style.setProperty('--plugin-input-border', 'rgba(255,255,255,0.2)');
+                root.style.setProperty('--plugin-input-bg',     'rgba(255,255,255,0.08)');
+                root.style.setProperty('--plugin-footer-bg',    '#181818');
+                root.dataset.pluginTheme = 'dark';
+            } else {
+                root.style.setProperty('--plugin-popup-bg',     '#f2f2f2');
+                root.style.setProperty('--plugin-popup-bg2',    '#e0e0e0');
+                root.style.setProperty('--plugin-popup-color',  '#1a1a1a');
+                root.style.setProperty('--plugin-popup-muted',  '#555555');
+                root.style.setProperty('--plugin-popup-border', 'rgba(0,0,0,0.15)');
+                root.style.setProperty('--plugin-popup-hover',  'rgba(0,0,0,0.08)');
+                root.style.setProperty('--plugin-popup-badge',  'rgba(0,0,0,0.1)');
+                root.style.setProperty('--plugin-input-border', 'rgba(0,0,0,0.28)');
+                root.style.setProperty('--plugin-input-bg',     'rgba(0,0,0,0.04)');
+                root.style.setProperty('--plugin-footer-bg',    '#c5cad1');
+                root.dataset.pluginTheme = 'light';
+            }
             var drawer = document.querySelector('.mainDrawer');
             var drawerRight = drawer ? drawer.getBoundingClientRect().right : 0;
             var footerLeft = (drawerRight > 0 && drawerRight < window.innerWidth * 0.5) ? drawerRight : 0;
-            document.documentElement.style.setProperty('--sc-footer-left', footerLeft + 'px');
+            root.style.setProperty('--plugin-footer-left', footerLeft + 'px');
+        }
+
+        function initFooter() {
+            applyPluginTheme();
 
             apiGet('strmcompanion/version')
                 .then(function (result) {
@@ -826,22 +1144,25 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             currentSeriesId = null;
             currentSeasonId = null;
             stopIntroPoll();
-            view.querySelector('#selectionForm').style.display        = '';
-            view.querySelector('#introProgressSection').style.display = 'none';
-            view.querySelector('#introResultsSection').style.display  = 'none';
-            view.querySelector('#selectSeason').disabled = true;
-            view.querySelector('#btnRun').disabled        = true;
+            queueRunning = false;
+            queueItems.forEach(function (it) { if (it.status === 'running') it.status = 'pending'; });
+            view.querySelector('#selectSeries').value = '';
+            var selSeason = view.querySelector('#selectSeason');
+            selSeason.disabled = true;
+            selSeason.innerHTML = '<option value="">- Select a series first -</option>';
+            view.querySelector('#btnAddToQueue').disabled = true;
             hideMarkers();
+            showQueueView();
+            renderQueue();
             loadSeries();
 
             // Always start on Intro Detection tab
             view.querySelectorAll('.sc-main-tab-btn').forEach(function (b) {
                 b.classList.toggle('active', b.getAttribute('data-sc-main') === 'intro');
             });
-            view.querySelector('#scMainIntro').style.display    = '';
-            view.querySelector('#scMainMedia').style.display    = 'none';
-            view.querySelector('#scMainMerge').style.display    = 'none';
-            view.querySelector('#scMainSettings').style.display = 'none';
+            view.querySelector('#scMainIntro').style.display = '';
+            view.querySelector('#scMainMedia').style.display = 'none';
+            view.querySelector('#scMainMerge').style.display = 'none';
         });
 
         view.addEventListener('viewhide', function () {

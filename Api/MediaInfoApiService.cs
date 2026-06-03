@@ -2,17 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using MediaBrowser.Controller.Api;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
-using MediaBrowser.Controller.Persistence;
-using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Services;
 using StrmCompanion.Jobs;
-using StrmCompanion.MediaInfo;
+using StrmCompanion.ScheduledTasks;
 
 namespace StrmCompanion.Api
 {
@@ -95,16 +94,13 @@ namespace StrmCompanion.Api
     public class MediaInfoApiService : BaseApiService
     {
         private readonly ILibraryManager _libraryManager;
-        private readonly IItemRepository _itemRepository;
         private readonly ILogger _logger;
 
         public MediaInfoApiService(
             ILibraryManager libraryManager,
-            IItemRepository itemRepository,
             ILogManager logManager)
         {
             _libraryManager = libraryManager;
-            _itemRepository = itemRepository;
             _logger = logManager.GetLogger(nameof(MediaInfoApiService));
         }
 
@@ -141,9 +137,9 @@ namespace StrmCompanion.Api
 
         public object Post(StartMediaInfoScan request)
         {
-            var task = PluginEntryPoint.TaskRegistry?.GetById("media-info") as MediaInfoAnalysisTask;
+            var task = PluginEntryPoint.MediaInfoTask;
             if (task == null)
-                throw new Exception("Media info task is not registered");
+                throw new Exception("Media info task is not initialized");
 
             var jobId = task.StartScan(CancellationToken.None);
             return new StartJobResponse { JobId = jobId };
@@ -174,7 +170,7 @@ namespace StrmCompanion.Api
         public object Get(GetMediaInfoStats request)
         {
             var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            var libraryIds = MediaInfoAnalysisTask.ParseLibraryIds(cfg.MediaInfoLibraryIds);
+            var libraryIds = MediaInfoScheduledTask.ParseLibraryIds(cfg.MediaInfoLibraryIds);
 
             var query = new InternalItemsQuery
             {
@@ -184,28 +180,32 @@ namespace StrmCompanion.Api
             if (libraryIds.Length > 0)
                 query.AncestorIds = libraryIds;
 
-            var result = _libraryManager.GetItemsResult(query);
-            var strmItems = result.Items
+            var allItems = _libraryManager.GetItemList(query).ToList();
+            var strmItems = allItems
                 .Where(i => i.Path != null && i.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
                 .ToList();
+
+            _logger.Info("StrmCompanion stats: library query returned {0} items, {1} are .strm files",
+                allItems.Count, strmItems.Count);
 
             int scannedMovies = 0, totalMovies = 0;
             int scannedEpisodes = 0, totalEpisodes = 0;
 
+            var task = PluginEntryPoint.MediaInfoTask;
+
             foreach (var item in strmItems)
             {
                 bool isMovie = item.GetType().Name == "Movie";
-                bool hasStreams = false;
-                try
-                {
-                    var streams = _itemRepository.GetMediaStreams(new MediaStreamQuery { ItemId = item.InternalId }, System.Threading.CancellationToken.None);
-                    hasStreams = streams != null && streams.Count > 0;
-                }
-                catch { }
+                bool hasMediaInfo = task != null
+                    ? task.ItemHasMediaInfo(item)
+                    : (item.Width > 0 || (item.RunTimeTicks.HasValue && item.RunTimeTicks > 0));
 
-                if (isMovie) { totalMovies++; if (hasStreams) scannedMovies++; }
-                else         { totalEpisodes++; if (hasStreams) scannedEpisodes++; }
+                if (isMovie) { totalMovies++; if (hasMediaInfo) scannedMovies++; }
+                else         { totalEpisodes++; if (hasMediaInfo) scannedEpisodes++; }
             }
+
+            _logger.Info("StrmCompanion stats: movies={0}/{1} scanned, episodes={2}/{3} scanned",
+                scannedMovies, totalMovies, scannedEpisodes, totalEpisodes);
 
             int total   = totalMovies + totalEpisodes;
             int scanned = scannedMovies + scannedEpisodes;

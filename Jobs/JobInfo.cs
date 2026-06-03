@@ -20,5 +20,8 @@ namespace StrmCompanion.Jobs
 
         /// <summary>Per-episode result messages, keyed by episode InternalId.</summary>
         public Dictionary<long, string> EpisodeResults { get; set; } = new Dictionary<long, string>();
+
+        /// <summary>Display titles for items in EpisodeResults, keyed by InternalId.</summary>
+        public Dictionary<long, string> ItemTitles { get; set; } = new Dictionary<long, string>();
     }
 }

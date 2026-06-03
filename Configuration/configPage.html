@@ -44,6 +44,7 @@
         .sc-action-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
         .sc-action-group { display: flex; gap: 6px; flex-wrap: wrap; }
         .sc-info { font-size: 12px; color: #888; margin: 4px 0 0; }
+        .sc-queue-running td:first-child { padding-left: 7px; border-left: 3px solid #00a4dc; }
 
         .sc-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
         @media (max-width: 600px) { .sc-settings-grid { grid-template-columns: 1fr; } }
@@ -66,7 +67,7 @@
         .sc-stats-miss.has-pending { color: #cc6600; }
         .sc-spinner { width: 16px; height: 16px; border: 2px solid #444; border-top-color: #00a4dc; border-radius: 50%; animation: sc-spin .7s linear infinite; flex-shrink: 0; }
         @keyframes sc-spin { to { transform: rotate(360deg); } }
-        .sc-stats-loading { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 6px; background: var(--theme-background-level2, #1a1a1a); border: 1px solid var(--line-color, #333); margin-bottom: 16px; color: #aaa; font-size: 13px; }
+        .sc-stats-loading { display: flex; align-items: center; gap: 10px; color: #aaa; font-size: 13px; }
 
         .sc-library-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
         .sc-library-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
@@ -119,27 +120,66 @@
         .modal-header-title { font-size: 1.5em; font-weight: bold; margin: 0; }
         .modal-body-scroll { padding: 28px; max-height: 70vh; overflow-y: auto; }
 
+        /* ── Expandable settings panels ─────────────────────────────── */
+        .sc-expand-wrap { margin-bottom: 20px; }
+        .sc-expand-header {
+            width: 100%; display: flex; align-items: center; justify-content: space-between;
+            cursor: pointer; padding: 10px 16px; border-radius: 6px;
+            background: var(--theme-background-level2, #1e1e1e);
+            border: 1px solid var(--line-color, #333);
+            color: #ccc; text-align: left; transition: border-color 0.2s;
+        }
+        .sc-expand-header:hover { border-color: #555; }
+        .sc-expand-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+        .sc-expand-chevron { font-size: 1.2em; color: #888; transition: transform 0.25s; flex-shrink: 0; }
+        .sc-expand-header.sc-open { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
+        .sc-expand-header.sc-open .sc-expand-chevron { transform: rotate(180deg); }
+        .sc-expand-body { padding: 16px; border: 1px solid var(--line-color, #333); border-top: none; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
+
         /* ── Footer ──────────────────────────────────────────────────── */
         .plugin-footer {
-            position: fixed; bottom: 0;
-            left: var(--sc-footer-left, 0); right: 0;
+            position: fixed;
+            bottom: 0;
+            left: var(--plugin-footer-left, 0);
+            right: 0;
             z-index: 200;
-            background: var(--theme-background-level1, #101010);
-            color: #888; height: 46px; padding: 0 28px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 0.85em;
-            border-top: 1px solid var(--line-color, #333);
+            background: var(--plugin-footer-bg);
+            color: var(--plugin-popup-muted);
+            height: 50px;
+            padding: 0 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9em;
+            border-top: 1px solid var(--line-color);
             box-sizing: border-box;
         }
-        .plugin-footer .footer-version { color: #aaa; }
-        .plugin-footer .footer-sep { margin: 0 12px; opacity: 0.35; }
-        .plugin-footer .footer-update-link { color: #E67E22; text-decoration: none; font-weight: bold; }
-        .plugin-footer .simple-link {
-            display: flex; align-items: center; gap: 6px;
-            text-decoration: none; color: #888; font-size: 1em; font-weight: 500;
+        .plugin-footer .footer-version {
+            color: var(--theme-text-secondary);
         }
-        .plugin-footer .simple-link:hover { color: #ddd; }
-        .content-primary { padding-bottom: 56px; }
+        .plugin-footer .footer-sep {
+            margin: 0 12px;
+            opacity: 0.35;
+        }
+        .plugin-footer .footer-update-link {
+            color: #E67E22;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .plugin-footer .simple-link {
+            font-size: 1em;
+            transition: none;
+            transform: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            color: var(--plugin-popup-muted);
+        }
+        .plugin-footer .simple-link:hover {
+            transform: none;
+        }
+        .content-primary { padding-bottom: 60px; }
     </style>
 
     <div data-role="content">
@@ -166,13 +206,108 @@
                 <button class="sc-main-tab-btn active" data-sc-main="intro">Intro Detection</button>
                 <button class="sc-main-tab-btn"        data-sc-main="media">Media Info</button>
                 <button class="sc-main-tab-btn"        data-sc-main="merge">Merge Version</button>
-                <button class="sc-main-tab-btn"        data-sc-main="settings">Settings</button>
             </div>
 
             <!-- ═══════════════════════════════════════════════════════
                  TAB: INTRO DETECTION
             ═══════════════════════════════════════════════════════════ -->
             <div id="scMainIntro">
+
+                <!-- ── Intro Detection settings (expandable) ─────────── -->
+                <div class="sc-expand-wrap">
+                    <button type="button" class="sc-expand-header" id="introSettingsHeader">
+                        <span class="sc-expand-title"><i class="md-icon">settings</i> Intro Detection — Settings</span>
+                        <i class="md-icon sc-expand-chevron">expand_more</i>
+                    </button>
+                    <div id="introSettingsBody" style="display:none;" class="sc-expand-body">
+
+                        <div class="verticalSection">
+                            <div class="sectionTitleContainer"><h2 class="sectionTitle">Storage</h2></div>
+                            <div class="sc-settings-grid">
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtFingerprintPath">Fingerprint cache path</label>
+                                    <input id="txtFingerprintPath" is="emby-input" type="text" class="emby-input" placeholder="Empty = default plugin data folder" />
+                                    <p class="sc-info">Where audio fingerprint files are stored on disk. Leave empty to use Emby's default plugin folder.</p>
+                                    <p id="lblEffectivePath" class="sc-info" style="color:#00a4dc;"></p>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtFfmpegPath">FFmpeg path (Intro Detection)</label>
+                                    <input id="txtFfmpegPath" is="emby-input" type="text" class="emby-input" placeholder="Empty = use Emby's built-in ffmpeg" />
+                                    <p class="sc-info">Full path to the ffmpeg executable used by Intro Detection. Leave empty to use the ffmpeg bundled with Emby. Media Info extraction uses Emby's built-in prober directly.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <div class="sectionTitleContainer"><h2 class="sectionTitle">Parameters</h2></div>
+                            <div class="sc-settings-grid">
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="numFingerprintMinutes">Fingerprint duration (minutes)</label>
+                                    <input id="numFingerprintMinutes" is="emby-input" type="number" class="emby-input" min="1" max="30" />
+                                    <p class="sc-info">How many minutes from episode start to analyse. 5 minutes works for most shows.</p>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="numMinIntroLength">Minimum intro length (seconds)</label>
+                                    <input id="numMinIntroLength" is="emby-input" type="number" class="emby-input" min="5" max="600" />
+                                    <p class="sc-info">Shortest allowed detected intro. Set to ~60–80% of the actual intro length.</p>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="numHamming">Hamming threshold (1–32)</label>
+                                    <input id="numHamming" is="emby-input" type="number" class="emby-input" min="1" max="32" />
+                                    <p class="sc-info">Tolerance for matching. Lower = stricter. Default 8, try to increase for low quality videos.</p>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtSilenceDb">Silence threshold</label>
+                                    <input id="txtSilenceDb" is="emby-input" type="text" class="emby-input" />
+                                    <p class="sc-info">Audio level below which a pause counts as silence (e.g. -30dB).</p>
+                                </div>
+                                <div class="inputContainer" style="display:flex;flex-direction:column;justify-content:center;padding-top:8px;">
+                                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+                                        <input id="chkOverwriteMarkers" type="checkbox" />
+                                        <span>Overwrite existing intro markers</span>
+                                    </label>
+                                    <p class="sc-info">When unchecked, episodes that already have intro markers are skipped.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button id="btnSaveIntroSettings" is="emby-button" class="raised button-submit emby-button" type="button">Save settings</button>
+                        <span id="introSettingsSavedMsg" style="display:none;margin-left:12px;color:#00a4dc;font-size:13px;">Saved!</span>
+
+                    </div>
+                </div>
+
+                <!-- Fingerprint database (collapsible) -->
+                <div class="sc-expand-wrap">
+                    <button type="button" class="sc-expand-header" id="fpDbHeader">
+                        <span class="sc-expand-title"><i class="md-icon">storage</i> Fingerprint database</span>
+                        <i class="md-icon sc-expand-chevron">expand_more</i>
+                    </button>
+                    <div id="fpDbBody" style="display:none;" class="sc-expand-body">
+                        <div class="verticalSection">
+                            <div class="sc-action-bar" style="margin-bottom:6px;">
+                                <p class="sc-info" style="margin:0;">Shows all series with cached fingerprint data on disk. Use this to clean up data for series no longer in your library.</p>
+                                <div class="sc-action-group">
+                                    <button id="btnRefreshFpDb" is="emby-button" class="raised emby-button" type="button">
+                                        <i class="md-icon">refresh</i>&nbsp;Refresh
+                                    </button>
+                                </div>
+                            </div>
+                            <p id="fpDbEmpty" class="sc-info" style="display:none;padding:8px 0;">No fingerprint data found.</p>
+                            <div id="fpDbLoading" style="display:none;color:#aaa;font-size:13px;">Loading...</div>
+                            <table id="fpDbTable" class="sc-marker-table" style="display:none;">
+                                <thead>
+                                    <tr>
+                                        <th>Series</th>
+                                        <th style="width:120px;">Episodes cached</th>
+                                        <th style="width:220px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fpDbTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- FFmpeg / Chromaprint warning -->
                 <div id="chromaprintWarning" style="display:none;" class="verticalSection">
@@ -181,67 +316,67 @@
                     </div>
                 </div>
 
-                <!-- Selection + markers -->
-                <div id="selectionForm" class="verticalSection">
+                <!-- Queue add form -->
+                <div id="queueAddForm" class="verticalSection">
                     <div class="sectionTitleContainer">
                         <h2 class="sectionTitle">Select what to analyse</h2>
                     </div>
-
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="selectSeries">Series</label>
-                        <select id="selectSeries" is="emby-select" class="emby-select-withcolor emby-select">
-                            <option value="">- Loading series... -</option>
-                        </select>
-                    </div>
-
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="selectSeason">Season</label>
-                        <select id="selectSeason" is="emby-select" class="emby-select-withcolor emby-select" disabled>
-                            <option value="">- Select a series first -</option>
-                        </select>
-                    </div>
-
-                    <!-- Current markers -->
-                    <div id="markersSection" style="display:none;" class="verticalSection">
-                        <div class="sc-action-bar">
-                            <h3 class="sectionTitle" style="font-size:15px;margin:0;">Current intro markers</h3>
-                            <div class="sc-action-group">
-                                <button id="btnDeleteSeasonMarkers" is="emby-button" class="raised emby-button sc-btn-danger" type="button">Delete markers (season)</button>
-                                <button id="btnDeleteSeasonAll"     is="emby-button" class="raised emby-button sc-btn-danger" type="button">Delete from database (season)</button>
-                                <button id="btnDeleteSeriesMarkers" is="emby-button" class="raised emby-button sc-btn-danger" type="button">Delete markers (series)</button>
-                                <button id="btnDeleteSeriesAll"     is="emby-button" class="raised emby-button sc-btn-danger" type="button">Delete from database (series)</button>
-                            </div>
+                    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+                        <div class="inputContainer" style="flex:1;min-width:180px;">
+                            <label class="inputLabel inputLabelUnfocused" for="selectSeries">Series</label>
+                            <select id="selectSeries" is="emby-select" class="emby-select-withcolor emby-select">
+                                <option value="">- Loading series... -</option>
+                            </select>
                         </div>
-                        <p class="sc-info">"Delete from database" removes both markers and the cached fingerprint data.</p>
-                        <div id="markersLoading" style="color:#aaa;font-size:13px;">Loading markers...</div>
-                        <table id="markersTable" class="sc-marker-table" style="display:none;">
-                            <thead>
-                                <tr>
-                                    <th id="colSeason" style="display:none;">Season</th>
-                                    <th>#</th>
-                                    <th>Episode</th>
-                                    <th>Intro start</th>
-                                    <th>Intro end</th>
-                                    <th>Length</th>
-                                    <th>Status</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody id="markersBody"></tbody>
-                        </table>
+                        <div class="inputContainer" style="flex:1;min-width:180px;">
+                            <label class="inputLabel inputLabelUnfocused" for="selectSeason">Season</label>
+                            <select id="selectSeason" is="emby-select" class="emby-select-withcolor emby-select" disabled>
+                                <option value="">- Select a series first -</option>
+                            </select>
+                        </div>
+                        <div style="padding-bottom:14px;">
+                            <button id="btnAddToQueue" is="emby-button" class="raised emby-button" type="button" disabled>
+                                <i class="md-icon">add</i>&nbsp;Add to queue
+                            </button>
+                        </div>
                     </div>
 
-                    <br/>
-                    <button id="btnRun" is="emby-button" class="raised button-submit emby-button" type="button" disabled>
-                        Run intro detection
-                    </button>
+                </div>
+
+                <!-- Queue section -->
+                <div id="queueSection" class="verticalSection">
+                    <div class="sc-action-bar">
+                        <h2 class="sectionTitle" style="margin:0;font-size:15px;">Queue</h2>
+                        <div class="sc-action-group">
+                            <button id="btnRunQueue" is="emby-button" class="raised button-submit emby-button" type="button" disabled>
+                                <i class="md-icon">play_arrow</i>&nbsp;Run
+                            </button>
+                            <button id="btnClearQueue" is="emby-button" class="raised emby-button" type="button" disabled>
+                                Clear queue
+                            </button>
+                        </div>
+                    </div>
+                    <p id="queueEmpty" class="sc-info" style="padding:8px 0;">Queue is empty. Add a series or season above.</p>
+                    <table id="queueTable" class="sc-marker-table" style="display:none;">
+                        <thead>
+                            <tr>
+                                <th style="width:30px;">#</th>
+                                <th>Series</th>
+                                <th>Season</th>
+                                <th>Status</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="queueBody"></tbody>
+                    </table>
                 </div>
 
                 <!-- Progress -->
                 <div id="introProgressSection" style="display:none;" class="verticalSection">
                     <div class="sectionTitleContainer">
-                        <h2 class="sectionTitle">Running...</h2>
+                        <h2 id="introProgressTitle" class="sectionTitle">Running...</h2>
                     </div>
+                    <p id="introProgressSubtitle" class="sc-info" style="margin-bottom:6px;"></p>
                     <p id="introStatusText" class="sectionText" style="margin-bottom:8px;">Preparing...</p>
                     <div class="sc-progress-wrap">
                         <div id="introProgressBar" class="sc-progress-bar"></div>
@@ -256,13 +391,51 @@
                     </div>
                     <p id="introResultSummary" class="sectionText"></p>
                     <table class="sc-marker-table">
-                        <thead><tr><th>Episode</th><th>Result</th></tr></thead>
+                        <thead><tr><th>Series · Season</th><th>Episode</th><th>Result</th></tr></thead>
                         <tbody id="introResultRows"></tbody>
                     </table>
                     <br/>
-                    <button id="btnReset" is="emby-button" class="raised emby-button" type="button">Run another analysis</button>
+                    <button id="btnBackToQueue" is="emby-button" class="raised emby-button" type="button">Back to queue</button>
                 </div>
 
+                <!-- Current markers (collapsible) -->
+                <div id="markersExpandWrap" class="sc-expand-wrap" style="display:none;margin-top:48px;">
+                    <button type="button" class="sc-expand-header sc-open" id="markersHeader">
+                        <span class="sc-expand-title"><i class="md-icon">playlist_play</i> Current intro markers</span>
+                        <i class="md-icon sc-expand-chevron">expand_more</i>
+                    </button>
+                    <div id="markersExpandBody" class="sc-expand-body">
+                        <div id="markersSection" class="verticalSection">
+                            <div class="sc-action-bar">
+                                <div class="sc-action-group">
+                                    <button id="btnDeleteSeasonMarkers" is="emby-button" class="raised emby-button sc-btn-danger" type="button">Delete markers (season)</button>
+                                    <button id="btnDeleteSeasonAll"     is="emby-button" class="raised emby-button sc-btn-danger" type="button">Clear fingerprint cache (season)</button>
+                                    <button id="btnDeleteSeriesMarkers" is="emby-button" class="raised emby-button sc-btn-danger" type="button">Delete markers (series)</button>
+                                    <button id="btnDeleteSeriesAll"     is="emby-button" class="raised emby-button sc-btn-danger" type="button">Clear fingerprint cache (series)</button>
+                                </div>
+                            </div>
+                            <p class="sc-info">"Clear fingerprint cache" removes the stored audio fingerprint files but keeps the intro markers intact.</p>
+                            <div id="markersLoading" style="color:#aaa;font-size:13px;">Loading markers...</div>
+                            <table id="markersTable" class="sc-marker-table" style="display:none;">
+                                <thead>
+                                    <tr>
+                                        <th id="colSeason" style="display:none;">Season</th>
+                                        <th>#</th>
+                                        <th>Episode</th>
+                                        <th>Intro start</th>
+                                        <th>Intro end</th>
+                                        <th>Length</th>
+                                        <th>Status</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="markersBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Intro settings (expandable) ───────────────────── -->
             </div><!-- /scMainIntro -->
 
             <!-- ═══════════════════════════════════════════════════════
@@ -270,8 +443,53 @@
             ═══════════════════════════════════════════════════════════ -->
             <div id="scMainMedia" style="display:none;">
 
+                <!-- ── Media Info settings (expandable) ──────────────── -->
+                <div class="sc-expand-wrap">
+                    <button type="button" class="sc-expand-header" id="mediaSettingsHeader">
+                        <span class="sc-expand-title"><i class="md-icon">settings</i> Media Info — Settings</span>
+                        <i class="md-icon sc-expand-chevron">expand_more</i>
+                    </button>
+                    <div id="mediaSettingsBody" style="display:none;" class="sc-expand-body">
+
+                        <div class="verticalSection">
+                            <div class="sectionTitleContainer"><h2 class="sectionTitle">Libraries to scan</h2></div>
+                            <p class="sc-info">Select which Emby libraries should be included. Only .strm files in selected libraries will be processed.</p>
+                            <div id="libraryList" class="sc-library-list">
+                                <span style="color:#aaa;font-size:13px;">Loading libraries...</span>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <div class="sectionTitleContainer"><h2 class="sectionTitle">Scan behaviour</h2></div>
+                            <div class="inputContainer" style="margin-bottom:12px;">
+                                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+                                    <input id="chkAutoScan" type="checkbox" />
+                                    <span>Auto-scan new .strm files</span>
+                                </label>
+                                <p class="sc-info">Automatically probe new .strm items added to configured libraries.</p>
+                            </div>
+                            <div class="sc-settings-grid">
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="numConcurrency">Concurrent scans (1–10)</label>
+                                    <input id="numConcurrency" is="emby-input" type="number" class="emby-input" min="1" max="10" />
+                                    <p class="sc-info">How many .strm files are probed simultaneously. Keep low (1–3) to avoid IPTV rate-limit bans. Default: 2.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button id="btnSaveMediaSettings" is="emby-button" class="raised button-submit emby-button" type="button">Save settings</button>
+                        <span id="mediaSettingsSavedMsg" style="display:none;margin-left:12px;color:#00a4dc;font-size:13px;">Saved!</span>
+
+                    </div>
+                </div>
+
                 <!-- Stats bar -->
                 <div id="statsBar" class="sc-stats-bar">
+                    <div id="statsLoading" class="sc-stats-loading" style="display:none;margin-bottom:8px;">
+                        <div class="sc-spinner"></div>
+                        <span>Loading statistics...</span>
+                    </div>
+                    <div id="statsError" style="display:none;color:#cc4444;font-size:13px;margin-bottom:8px;">Could not load stats.</div>
                     <table class="sc-stats-table">
                         <thead>
                             <tr>
@@ -297,15 +515,10 @@
                         </tbody>
                     </table>
                 </div>
-                <div id="statsLoading" class="sc-stats-loading" style="display:none;">
-                    <div class="sc-spinner"></div>
-                    <span>Loading statistics...</span>
-                </div>
-                <div id="statsError" style="display:none;color:#cc4444;font-size:13px;margin-bottom:16px;">Could not load stats.</div>
 
                 <!-- No libraries configured warning -->
                 <div id="noLibrariesWarn" style="display:none;padding:10px 14px;border:1px solid #cc6600;border-radius:4px;color:#cc6600;font-size:13px;margin-bottom:12px;">
-                    No libraries configured. Go to the <strong>Settings</strong> tab to select which libraries to scan.
+                    No libraries configured. Open <strong>Media Info — Settings</strong> above to select which libraries to scan.
                 </div>
 
                 <!-- Controls -->
@@ -342,6 +555,7 @@
                     <button id="btnMediaReset" is="emby-button" class="raised emby-button" type="button">Run another scan</button>
                 </div>
 
+                <!-- ── Media Info settings (expandable) ──────────────── -->
             </div><!-- /scMainMedia -->
 
             <!-- ═══════════════════════════════════════════════════════
@@ -349,27 +563,72 @@
             ═══════════════════════════════════════════════════════════ -->
             <div id="scMainMerge" style="display:none;">
 
-                <!-- Library selection -->
-                <div class="verticalSection">
-                    <div class="sectionTitleContainer">
-                        <h2 class="sectionTitle">Libraries to merge</h2>
-                    </div>
-                    <p class="sc-info">Select which libraries to scan for duplicate movies and episodes. "Global" scans all libraries.</p>
-                    <div style="margin-bottom:10px;">
-                        <label class="sc-library-item">
-                            <input type="checkbox" id="chkMergeGlobal" />
-                            <span style="font-weight:600;">Global (all libraries)</span>
-                        </label>
-                    </div>
-                    <div id="mergeLibraryList" class="sc-library-list">
-                        <span style="color:#aaa;font-size:13px;">Loading libraries...</span>
+                <!-- ── Merge Version settings (expandable) ───────────── -->
+                <div class="sc-expand-wrap">
+                    <button type="button" class="sc-expand-header" id="mergeSettingsHeader">
+                        <span class="sc-expand-title"><i class="md-icon">settings</i> Merge Version — Settings</span>
+                        <i class="md-icon sc-expand-chevron">expand_more</i>
+                    </button>
+                    <div id="mergeSettingsBody" style="display:none;" class="sc-expand-body">
+
+                        <div class="verticalSection">
+                            <div class="sectionTitleContainer"><h2 class="sectionTitle">Movies merge scope</h2></div>
+                            <p class="sc-info">GlobalScope: merge movies across all movie libraries together. LibraryScope: each library merged independently.</p>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="selectMergeMoviesScope">Movies scope</label>
+                                <select id="selectMergeMoviesScope" is="emby-select" class="emby-select-withcolor emby-select">
+                                    <option value="GlobalScope">Global (all movie libraries together)</option>
+                                    <option value="LibraryScope">Per-library (each library separately)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <div class="sectionTitleContainer"><h2 class="sectionTitle">Series merge scope</h2></div>
+                            <p class="sc-info">Enabled: merges episode alternate versions (e.g. 1080p + 4K of the same episode) across all TV libraries, and refreshes series that share provider IDs in TV libraries with automatic series grouping enabled. Disabled: skip series and episodes.</p>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="selectMergeSeriesScope">Series scope</label>
+                                <select id="selectMergeSeriesScope" is="emby-select" class="emby-select-withcolor emby-select">
+                                    <option value="Disabled">Disabled</option>
+                                    <option value="GlobalScope">Enabled (auto-grouping TV libraries)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <div class="sectionTitleContainer"><h2 class="sectionTitle">Auto-detect</h2></div>
+                            <div class="inputContainer">
+                                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+                                    <input id="chkMergeAutoDetect" type="checkbox" />
+                                    <span>Auto-detect new movies and episodes</span>
+                                </label>
+                                <p class="sc-info">Automatically runs the merge in the relevant library 30 seconds after a new movie or episode is added. Useful when Emby's real-time file monitoring is enabled.</p>
+                            </div>
+                        </div>
+
+                        <button id="btnSaveMergeSettings" is="emby-button" class="raised button-submit emby-button" type="button">Save settings</button>
+                        <span id="mergeSavedMsg" style="display:none;margin-left:12px;color:#00a4dc;font-size:13px;">Saved!</span>
+
                     </div>
                 </div>
 
-                <!-- Save settings -->
-                <div class="sc-action-group" style="margin-bottom:20px;">
-                    <button id="btnSaveMergeSettings" is="emby-button" class="raised button-submit emby-button" type="button">Save settings</button>
-                    <span id="mergeSavedMsg" style="display:none;margin-left:12px;color:#00a4dc;font-size:13px;">Saved!</span>
+                <!-- Last run stats -->
+                <div id="mergeLastRun" class="sc-stats-bar" style="display:none;">
+                    <div id="mergeLastRunTime" style="font-size:11px;color:#888;margin-bottom:10px;"></div>
+                    <div style="display:flex;gap:28px;flex-wrap:wrap;">
+                        <div style="text-align:center;">
+                            <div id="mergeStatFound" class="sc-stats-num">–</div>
+                            <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:2px;">Found</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div id="mergeStatMerged" style="font-size:18px;font-weight:700;color:#52B54B;">–</div>
+                            <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:2px;">Merged</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div id="mergeStatFailed" class="sc-stats-miss">–</div>
+                            <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:2px;">Failed</div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Run merge -->
@@ -377,7 +636,7 @@
                     <div class="sectionTitleContainer">
                         <h2 class="sectionTitle">Run merge</h2>
                     </div>
-                    <p class="sc-info">Finds movies and episodes with identical names/year (or series + season + episode number) and merges them as Emby alternate versions.</p>
+                    <p class="sc-info">Finds movies and episodes with identical IMDb or TVDb ID and merges them as Emby alternate versions.</p>
                     <button id="btnRunMerge" is="emby-button" class="raised button-submit emby-button" type="button">Run Merge</button>
                 </div>
 
@@ -409,103 +668,7 @@
 
             </div><!-- /scMainMerge -->
 
-            <!-- ═══════════════════════════════════════════════════════
-                 TAB: SETTINGS
-            ═══════════════════════════════════════════════════════════ -->
-            <div id="scMainSettings" style="display:none;">
-
-                <!-- ── Intro Detection settings ────────────────── -->
-                <div class="verticalSection">
-                    <div class="sectionTitleContainer">
-                        <h2 class="sectionTitle">Intro Detection — Storage</h2>
-                    </div>
-                    <div class="sc-settings-grid">
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtFingerprintPath">Fingerprint cache path</label>
-                            <input id="txtFingerprintPath" is="emby-input" type="text" class="emby-input"
-                                   placeholder="Empty = default plugin data folder" />
-                            <p class="sc-info">Where audio fingerprint files are stored on disk. Leave empty to use Emby's default plugin folder.</p>
-                            <p id="lblEffectivePath" class="sc-info" style="color:#00a4dc;"></p>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtFfmpegPath">FFmpeg path</label>
-                            <input id="txtFfmpegPath" is="emby-input" type="text" class="emby-input"
-                                   placeholder="Empty = use Emby's built-in ffmpeg" />
-                            <p class="sc-info">Full path to the ffmpeg executable. Leave empty to use the ffmpeg bundled with Emby.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="verticalSection">
-                    <div class="sectionTitleContainer">
-                        <h2 class="sectionTitle">Intro Detection — Parameters</h2>
-                    </div>
-                    <div class="sc-settings-grid">
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="numFingerprintMinutes">Fingerprint duration (minutes)</label>
-                            <input id="numFingerprintMinutes" is="emby-input" type="number" class="emby-input" min="1" max="30" />
-                            <p class="sc-info">How many minutes from episode start to analyse. 5 minutes works for most shows.</p>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="numMinIntroLength">Minimum intro length (seconds)</label>
-                            <input id="numMinIntroLength" is="emby-input" type="number" class="emby-input" min="5" max="600" />
-                            <p class="sc-info">Shortest allowed detected intro. Set to ~60–80% of the actual intro length.</p>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="numHamming">Hamming threshold (1–32)</label>
-                            <input id="numHamming" is="emby-input" type="number" class="emby-input" min="1" max="32" />
-                            <p class="sc-info">Bit tolerance for fingerprint matching. Lower = stricter. Default 8, try 10 for streaming sources.</p>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtSilenceDb">Silence threshold</label>
-                            <input id="txtSilenceDb" is="emby-input" type="text" class="emby-input" />
-                            <p class="sc-info">Audio level below which a pause counts as silence (e.g. -30dB).</p>
-                        </div>
-                        <div class="inputContainer" style="display:flex;flex-direction:column;justify-content:center;padding-top:8px;">
-                            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
-                                <input id="chkOverwriteMarkers" type="checkbox" />
-                                <span>Overwrite existing intro markers</span>
-                            </label>
-                            <p class="sc-info">When unchecked, episodes that already have intro markers are skipped. Enable to recompute and overwrite all markers.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ── Media Info settings ──────────────────────── -->
-                <div class="verticalSection">
-                    <div class="sectionTitleContainer">
-                        <h2 class="sectionTitle">Media Info — Libraries to scan</h2>
-                    </div>
-                    <p class="sc-info">Select which Emby libraries should be included when scanning for media info. Only .strm files in selected libraries will be processed.</p>
-                    <div id="libraryList" class="sc-library-list">
-                        <span style="color:#aaa;font-size:13px;">Loading libraries...</span>
-                    </div>
-                </div>
-
-                <div class="verticalSection">
-                    <div class="sectionTitleContainer">
-                        <h2 class="sectionTitle">Media Info — Scan behaviour</h2>
-                    </div>
-                    <div class="sc-settings-grid">
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="numConcurrency">Concurrent scans (1–10)</label>
-                            <input id="numConcurrency" is="emby-input" type="number" class="emby-input" min="1" max="10" />
-                            <p class="sc-info">How many .strm files are probed simultaneously. Keep low (1–3) to avoid IPTV rate-limit bans. Default: 2.</p>
-                        </div>
-                        <div class="inputContainer" style="display:flex;flex-direction:column;justify-content:center;padding-top:8px;">
-                            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
-                                <input id="chkAutoScan" type="checkbox" />
-                                <span>Auto-scan new .strm files</span>
-                            </label>
-                            <p class="sc-info">Automatically probe new .strm items added to configured libraries.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <button id="btnSaveSettings" is="emby-button" class="raised button-submit emby-button" type="button">Save settings</button>
-                <span id="settingsSavedMsg" style="display:none;margin-left:12px;color:#00a4dc;font-size:13px;">Saved!</span>
-
-            </div><!-- /scMainSettings -->
+            <div id="scMainSettings" style="display:none;"></div><!-- /scMainSettings -->
 
         </div>
     </div>
@@ -572,9 +735,14 @@
         <span class="footer-sep" id="footerUpdateSep" style="display:none;">·</span>
         <span id="footerUpdateInfo"></span>
         <span class="footer-sep">·</span>
-        <a href="https://github.com/soderlund91/StrmCompanion" target="_blank" class="simple-link">
+        <a href="https://github.com/soderlund91/StrmCompanion/tree/main" target="_blank" class="simple-link">
             <svg viewBox="0 0 16 16" width="1.3em" height="1.1em" style="vertical-align:middle;" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
             <span>GitHub</span>
+        </a>
+        <span class="footer-sep">·</span>
+        <a href="https://emby.media/community/" target="_blank" class="simple-link">
+            <i class="md-icon" style="font-size:1.3em;">forum</i>
+            <span>Emby Forum</span>
         </a>
     </div>
 </div>

@@ -1,14 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AssemblyName>StrmCompanion</AssemblyName>
     <RootNamespace>StrmCompanion</RootNamespace>
-    <Version>0.0.0.8</Version>
+    <Version>0.0.0.23</Version>
     <Product>StrmCompanion</Product>
   </PropertyGroup>
 
@@ -26,21 +26,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Direct references to the installed Emby server DLLs – compile-time only, not bundled -->
-    <Reference Include="MediaBrowser.Common">
-      <HintPath>$(AppData)\Emby-Server\system\MediaBrowser.Common.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="MediaBrowser.Controller">
-      <HintPath>$(AppData)\Emby-Server\system\MediaBrowser.Controller.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="MediaBrowser.Model">
-      <HintPath>$(AppData)\Emby-Server\system\MediaBrowser.Model.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
+    <!-- Emby server core – compile-time reference only, Private=False means not bundled in output -->
+    <PackageReference Include="mediabrowser.server.core" Version="4.9.1.80" />
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
     <!-- Managed Chromaprint / AcoustID fingerprinting -->
     <PackageReference Include="AcoustID.NET" Version="1.3.3" />
+    <!-- System.Memory required by AcoustID.NET on netstandard2.0 -->
+    <PackageReference Include="System.Memory" Version="4.5.5" />
   </ItemGroup>
 
 </Project>

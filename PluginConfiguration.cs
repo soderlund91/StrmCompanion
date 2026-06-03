@@ -19,7 +19,7 @@ namespace StrmCompanion
         /// <summary>Minimum silence duration in seconds for silencedetect filter.</summary>
         public double SilenceDurationSeconds { get; set; } = 0.5;
 
-        /// <summary>Override path to ffmpeg executable. Empty = use Emby's bundled ffmpeg.</summary>
+        /// <summary>Override path to ffmpeg executable used by Intro Detection. Empty = use Emby's bundled ffmpeg.</summary>
         public string FfmpegPathOverride { get; set; } = string.Empty;
 
         /// <summary>
@@ -48,7 +48,13 @@ namespace StrmCompanion
 
         // ── Merge Version ────────────────────────────────────────────────────────────
 
-        /// <summary>Comma-separated CollectionFolder InternalIds to scope merging. Empty = all libraries (Global).</summary>
-        public string MergeVersionLibraryIds { get; set; } = string.Empty;
+        /// <summary>Scope for merging movies. "GlobalScope" = all libraries together; "LibraryScope" = each library independently.</summary>
+        public string MergeMoviesScope { get; set; } = "GlobalScope";
+
+        /// <summary>Scope for series merging. "GlobalScope" = enabled (TV libs with auto-grouping); "Disabled" = skip.</summary>
+        public string MergeSeriesScope { get; set; } = "Disabled";
+
+        /// <summary>When true, automatically triggers a merge in the relevant library when a new movie or episode is added.</summary>
+        public bool MergeAutoDetect { get; set; } = false;
     }
 }

@@ -63,6 +63,12 @@ namespace StrmCompanion.Jobs
                 job.EpisodeResults[episodeId] = message;
         }
 
+        public void SetItemTitle(string jobId, long itemId, string title)
+        {
+            if (_jobs.TryGetValue(jobId, out var job))
+                job.ItemTitles[itemId] = title;
+        }
+
         public void CompleteJob(string jobId)
         {
             if (_jobs.TryGetValue(jobId, out var job))

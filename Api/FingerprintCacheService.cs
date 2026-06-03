@@ -13,6 +13,18 @@ namespace StrmCompanion.Api
 {
     // ------------------------------------------------------------------ requests
 
+    [Route("/strmcompanion/fingerprints", "GET",
+        Summary = "List all series that have cached fingerprint data")]
+    [Authenticated]
+    public class GetFingerprintDatabase : IReturn<List<FingerprintSeriesInfo>> { }
+
+    public class FingerprintSeriesInfo
+    {
+        public long SeriesId { get; set; }
+        public string SeriesName { get; set; }
+        public int EpisodeCount { get; set; }
+    }
+
     [Route("/strmcompanion/fingerprints/season/{SeasonId}", "DELETE",
         Summary = "Delete cached fingerprints for all episodes in a season")]
     [Authenticated]
@@ -108,6 +120,24 @@ namespace StrmCompanion.Api
             store.DeleteAll(request.SeriesId);
 
             _logger.Info("StrmCompanion: deleted all data for series {0}", request.SeriesId);
+        }
+
+        public List<FingerprintSeriesInfo> Get(GetFingerprintDatabase request)
+        {
+            var store = GetStore();
+            var result = new List<FingerprintSeriesInfo>();
+            foreach (var entry in store.ListAll())
+            {
+                var series = _libraryManager.GetItemById(entry.SeriesId);
+                result.Add(new FingerprintSeriesInfo
+                {
+                    SeriesId    = entry.SeriesId,
+                    SeriesName  = series?.Name ?? entry.SeriesId.ToString(),
+                    EpisodeCount = entry.EpisodeCount
+                });
+            }
+            result.Sort((a, b) => string.Compare(a.SeriesName, b.SeriesName, System.StringComparison.OrdinalIgnoreCase));
+            return result;
         }
 
         // ------------------------------------------------------------------ helpers
