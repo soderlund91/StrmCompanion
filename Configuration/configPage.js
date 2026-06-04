@@ -48,6 +48,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         var mediaJobId       = null;
         var mediaPoll        = null;
         var mediaLiveRendered = {};
+        var mediaStatsTick   = 0;
         var mergeJobId       = null;
         var mergePoll        = null;
         var mergeLiveRendered = {};
@@ -701,6 +702,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         function startMediaScan() {
             mediaLiveRendered = {};
+            mediaStatsTick    = 0;
             view.querySelector('#mediaHistoryRows').innerHTML         = '';
             view.querySelector('#mediaHistorySection').style.display  = 'none';
             view.querySelectorAll('[data-mfilter]').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-mfilter') === 'all'); });
@@ -782,6 +784,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                     view.querySelector('#mediaProgressBar').style.width = (job.ProgressPercent || 0) + '%';
                     view.querySelector('#mediaStatusText').textContent   = job.CurrentActivity || '';
                     updateMediaHistoryTable(job);
+                    if (++mediaStatsTick % 5 === 0) loadMediaStats();
                     if (job.Status === 'Completed' || job.Status === 'Failed' || job.Status === 'Cancelled') {
                         stopMediaPoll();
                         showMediaResults(job);
