@@ -81,6 +81,15 @@ namespace StrmCompanion.IntroDetection
                 Directory.Delete(dir, recursive: true);
         }
 
+        public IEnumerable<long> ListEpisodeIds(long seriesId)
+        {
+            var dir = Path.Combine(_basePath, seriesId.ToString());
+            if (!Directory.Exists(dir)) yield break;
+            foreach (var file in Directory.GetFiles(dir, "*.json"))
+                if (long.TryParse(Path.GetFileNameWithoutExtension(file), out var epId))
+                    yield return epId;
+        }
+
         /// <summary>Returns all series that have at least one cached fingerprint file.</summary>
         public List<(long SeriesId, int EpisodeCount)> ListAll()
         {

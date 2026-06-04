@@ -18,11 +18,19 @@ namespace StrmCompanion.Api
     [Authenticated]
     public class GetFingerprintDatabase : IReturn<List<FingerprintSeriesInfo>> { }
 
+    public class FingerprintSeasonInfo
+    {
+        public long SeasonId { get; set; }
+        public string SeasonName { get; set; }
+        public int EpisodeCount { get; set; }
+    }
+
     public class FingerprintSeriesInfo
     {
         public long SeriesId { get; set; }
         public string SeriesName { get; set; }
         public int EpisodeCount { get; set; }
+        public List<FingerprintSeasonInfo> Seasons { get; set; }
     }
 
     [Route("/strmcompanion/fingerprints/season/{SeasonId}", "DELETE",
@@ -129,11 +137,28 @@ namespace StrmCompanion.Api
             foreach (var entry in store.ListAll())
             {
                 var series = _libraryManager.GetItemById(entry.SeriesId);
+                var cachedIds = new System.Collections.Generic.HashSet<long>(store.ListEpisodeIds(entry.SeriesId));
+
+                var seasons = GetSeasons(entry.SeriesId);
+                var seasonInfos = new List<FingerprintSeasonInfo>();
+                foreach (var season in seasons)
+                {
+                    var count = GetEpisodes(season.InternalId).Count(ep => cachedIds.Contains(ep.InternalId));
+                    if (count > 0)
+                        seasonInfos.Add(new FingerprintSeasonInfo
+                        {
+                            SeasonId    = season.InternalId,
+                            SeasonName  = season.Name ?? season.InternalId.ToString(),
+                            EpisodeCount = count
+                        });
+                }
+
                 result.Add(new FingerprintSeriesInfo
                 {
-                    SeriesId    = entry.SeriesId,
-                    SeriesName  = series?.Name ?? entry.SeriesId.ToString(),
-                    EpisodeCount = entry.EpisodeCount
+                    SeriesId     = entry.SeriesId,
+                    SeriesName   = series?.Name ?? entry.SeriesId.ToString(),
+                    EpisodeCount = entry.EpisodeCount,
+                    Seasons      = seasonInfos
                 });
             }
             result.Sort((a, b) => string.Compare(a.SeriesName, b.SeriesName, System.StringComparison.OrdinalIgnoreCase));
@@ -176,6 +201,19 @@ namespace StrmCompanion.Api
                 AncestorIds = new[] { season.InternalId },
                 IncludeItemTypes = new[] { "Episode" },
                 IsVirtualItem = false
+            };
+            return _libraryManager.GetItemsResult(query).Items;
+        }
+
+        private IEnumerable<BaseItem> GetSeasons(long seriesInternalId)
+        {
+            var series = _libraryManager.GetItemById(seriesInternalId);
+            if (series == null) return System.Linq.Enumerable.Empty<BaseItem>();
+            var query = new InternalItemsQuery
+            {
+                AncestorIds      = new[] { series.InternalId },
+                IncludeItemTypes = new[] { "Season" },
+                IsVirtualItem    = false
             };
             return _libraryManager.GetItemsResult(query).Items;
         }

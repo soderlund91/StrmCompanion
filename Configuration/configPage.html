@@ -33,9 +33,10 @@
         .sc-marker-table td { padding: 6px 10px; border-bottom: 1px solid var(--line-color, #333); vertical-align: middle; }
         .sc-marker-table tr:last-child td { border-bottom: none; }
 
-        .sc-badge-ok   { display: inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(0,164,220,.15); color: #00a4dc; font-size: 11px; }
-        .sc-badge-none { display: inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(128,128,128,.15); color: #888; font-size: 11px; }
-        .sc-badge-err  { display: inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(200,50,50,.15); color: #cc4444; font-size: 11px; }
+        .sc-badge-ok    { display: inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(0,164,220,.15);   color: #00a4dc; font-size: 11px; }
+        .sc-badge-green { display: inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(82,181,75,.15);  color: #52B54B; font-size: 11px; }
+        .sc-badge-none  { display: inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(128,128,128,.15); color: #888;    font-size: 11px; }
+        .sc-badge-err   { display: inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(200,50,50,.15);  color: #cc4444; font-size: 11px; }
 
         .sc-progress-wrap { background: #444; border-radius: 4px; height: 8px; margin: 4px 0 16px; overflow: hidden; }
         .sc-progress-bar  { background: #00a4dc; height: 8px; width: 0%; transition: width 0.4s; }
@@ -48,6 +49,15 @@
 
         .sc-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
         @media (max-width: 600px) { .sc-settings-grid { grid-template-columns: 1fr; } }
+
+        /* ── Filter buttons ─────────────────────────────────────────── */
+        .sc-filter-btn {
+            padding: 3px 12px; border-radius: 12px; cursor: pointer; font-size: 12px;
+            border: 1px solid var(--line-color, #444); background: transparent; color: #aaa;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .sc-filter-btn.active { background: rgba(0,164,220,.15); border-color: #00a4dc; color: #00a4dc; }
+        .sc-filter-btn:hover:not(.active) { border-color: #666; color: #ccc; }
 
         /* ── Media Info specific ──────────────────────────────────────── */
         .sc-stats-bar {
@@ -300,7 +310,7 @@
                                     <tr>
                                         <th>Series</th>
                                         <th style="width:120px;">Episodes cached</th>
-                                        <th style="width:220px;"></th>
+                                        <th></th>
                                     </tr>
                                 </thead>
                                 <tbody id="fpDbTbody"></tbody>
@@ -547,12 +557,26 @@
                         <h2 id="mediaResultTitle" class="sectionTitle">Results</h2>
                     </div>
                     <p id="mediaResultSummary" class="sectionText"></p>
-                    <table class="sc-marker-table">
-                        <thead><tr><th>Item</th><th>Result</th></tr></thead>
-                        <tbody id="mediaResultRows"></tbody>
-                    </table>
-                    <br/>
                     <button id="btnMediaReset" is="emby-button" class="raised emby-button" type="button">Run another scan</button>
+                </div>
+
+                <!-- Persistent scan history -->
+                <div id="mediaHistorySection" style="display:none;" class="verticalSection">
+                    <div class="sc-action-bar" style="margin-bottom:10px;">
+                        <div style="font-size:13px;font-weight:600;color:#ccc;">Last scan — item details</div>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                            <button class="sc-filter-btn active" data-mfilter="all">All</button>
+                            <button class="sc-filter-btn" data-mfilter="green">With info</button>
+                            <button class="sc-filter-btn" data-mfilter="none">No info</button>
+                            <button class="sc-filter-btn" data-mfilter="err">Error</button>
+                        </div>
+                    </div>
+                    <div style="max-height:420px;overflow-y:auto;" id="mediaHistoryScroll">
+                        <table class="sc-marker-table">
+                            <thead><tr><th>Item</th><th>Result</th></tr></thead>
+                            <tbody id="mediaHistoryRows"></tbody>
+                        </table>
+                    </div>
                 </div>
 
                 <!-- ── Media Info settings (expandable) ──────────────── -->
@@ -650,6 +674,16 @@
                         <div id="mergeProgressBar" class="sc-progress-bar"></div>
                     </div>
                     <button id="btnMergeCancel" is="emby-button" class="raised emby-button" type="button">Cancel</button>
+
+                    <div id="mergeScanLiveWrap" style="display:none;margin-top:20px;">
+                        <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:6px;">Processed so far</div>
+                        <div style="max-height:400px;overflow-y:auto;">
+                            <table class="sc-marker-table">
+                                <thead><tr><th>Item</th><th>Result</th></tr></thead>
+                                <tbody id="mergeScanLiveRows"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Results -->

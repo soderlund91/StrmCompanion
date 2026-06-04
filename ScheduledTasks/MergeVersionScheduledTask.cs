@@ -14,6 +14,8 @@ namespace StrmCompanion.ScheduledTasks
         private readonly ILogger _logger;
 
         public static readonly AsyncLocal<CollectionFolder> CurrentScanLibrary = new AsyncLocal<CollectionFolder>();
+        private static string _pendingJobId;
+        public static void SetPendingJobId(string jobId) => _pendingJobId = jobId;
 
         public MergeVersionScheduledTask(ILogManager logManager)
         {
@@ -49,9 +51,9 @@ namespace StrmCompanion.ScheduledTasks
                 return;
             }
 
-            // Full scan: pass null so scope setting determines grouping
             CurrentScanLibrary.Value = null;
-            var jobId = svc.StartMerge(null, cancellationToken);
+            var pendingId = System.Threading.Interlocked.Exchange(ref _pendingJobId, null);
+            var jobId = svc.StartMerge(null, cancellationToken, pendingId);
             await WaitForJob(jobManager, jobId, progress, cancellationToken).ConfigureAwait(false);
         }
 

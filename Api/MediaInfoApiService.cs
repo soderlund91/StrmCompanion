@@ -137,12 +137,20 @@ namespace StrmCompanion.Api
 
         public object Post(StartMediaInfoScan request)
         {
-            var task = PluginEntryPoint.MediaInfoTask;
-            if (task == null)
-                throw new Exception("Media info task is not initialized");
+            var jobManager = PluginEntryPoint.JobManager;
+            if (jobManager == null)
+                throw new Exception("JobManager is not initialized");
 
-            var jobId = task.StartScan(CancellationToken.None);
-            return new StartJobResponse { JobId = jobId };
+            var running = jobManager.GetAllJobs()
+                .FirstOrDefault(j => j.TaskId == "media-info" && j.Status == JobStatus.Running);
+            if (running != null)
+                return new StartJobResponse { JobId = running.JobId };
+
+            var job = jobManager.CreateJob("media-info", 0, "Media Info Scan", null, null);
+            MediaInfoScheduledTask.SetPendingJobId(job.JobId);
+            PluginEntryPoint.TaskManager?.QueueScheduledTask<MediaInfoScheduledTask>();
+
+            return new StartJobResponse { JobId = job.JobId };
         }
 
         public object Get(GetMediaInfoJobStatus request)
@@ -198,7 +206,7 @@ namespace StrmCompanion.Api
                 bool isMovie = item.GetType().Name == "Movie";
                 bool hasMediaInfo = task != null
                     ? task.ItemHasMediaInfo(item)
-                    : (item.Width > 0 || (item.RunTimeTicks.HasValue && item.RunTimeTicks > 0));
+                    : item.GetMediaStreams().Any(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Video);
 
                 if (isMovie) { totalMovies++; if (hasMediaInfo) scannedMovies++; }
                 else         { totalEpisodes++; if (hasMediaInfo) scannedEpisodes++; }

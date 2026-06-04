@@ -8,8 +8,10 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Serialization;
+using MediaBrowser.Model.Tasks;
 using StrmCompanion.Analysis;
 using StrmCompanion.IntroDetection;
 using StrmCompanion.Jobs;
@@ -23,8 +25,9 @@ namespace StrmCompanion
         private readonly ILibraryManager _libraryManager;
         private readonly IItemRepository _itemRepository;
         private readonly IProviderManager _providerManager;
-        private readonly IDirectoryService _directoryService;
+        private readonly IFileSystem _fileSystem;
         private readonly IJsonSerializer _jsonSerializer;
+        private readonly ITaskManager _taskManager;
         private readonly ILogger _logger;
         private readonly ILogManager _logManager;
 
@@ -38,21 +41,24 @@ namespace StrmCompanion
         public static IItemRepository ItemRepository { get; private set; }
         public static MergeVersionService MergeVersionService { get; private set; }
         public static MediaInfoScheduledTask MediaInfoTask { get; private set; }
+        public static ITaskManager TaskManager { get; private set; }
 
         public PluginEntryPoint(
             ILogManager logManager,
             ILibraryManager libraryManager,
             IItemRepository itemRepository,
             IProviderManager providerManager,
-            IDirectoryService directoryService,
-            IJsonSerializer jsonSerializer)
+            IFileSystem fileSystem,
+            IJsonSerializer jsonSerializer,
+            ITaskManager taskManager)
         {
             _logManager = logManager;
             _libraryManager = libraryManager;
             _itemRepository = itemRepository;
             _providerManager = providerManager;
-            _directoryService = directoryService;
+            _fileSystem = fileSystem;
             _jsonSerializer = jsonSerializer;
+            _taskManager = taskManager;
             _logger = logManager.GetLogger(nameof(StrmCompanion));
         }
 
@@ -63,9 +69,10 @@ namespace StrmCompanion
             JobManager = new JobManager(_logger);
             TaskRegistry = new AnalysisTaskRegistry();
             ItemRepository = _itemRepository;
+            TaskManager = _taskManager;
 
             MergeVersionService = new MergeVersionService(
-                _libraryManager, _providerManager, _directoryService, JobManager, _logManager);
+                _libraryManager, _providerManager, _fileSystem, JobManager, _logManager);
 
             var introTask = new IntroDetectionAnalysisTask(
                 _libraryManager,
@@ -79,7 +86,7 @@ namespace StrmCompanion
             _mediaInfoTask = new MediaInfoScheduledTask(
                 _libraryManager,
                 _providerManager,
-                _directoryService,
+                _fileSystem,
                 _logManager);
 
             MediaInfoTask = _mediaInfoTask;

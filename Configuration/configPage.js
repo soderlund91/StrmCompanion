@@ -45,10 +45,12 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         var introPoll     = null;
         var currentSeriesId = null;
         var currentSeasonId = null;
-        var mediaJobId    = null;
-        var mediaPoll     = null;
-        var mergeJobId    = null;
-        var mergePoll     = null;
+        var mediaJobId       = null;
+        var mediaPoll        = null;
+        var mediaLiveRendered = {};
+        var mergeJobId       = null;
+        var mergePoll        = null;
+        var mergeLiveRendered = {};
 
         // Queue state
         var queueItems        = [];   // { seriesId, seasonId, seriesName, seasonName, status }
@@ -68,7 +70,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 view.querySelector('#scMainMedia').style.display = target === 'media' ? '' : 'none';
                 view.querySelector('#scMainMerge').style.display = target === 'merge' ? '' : 'none';
 
-                if (target === 'media') { loadMediaStats(); loadMediaInfoSettings(); }
+                if (target === 'media') { loadMediaStats(); loadMediaInfoSettings(); loadMediaLastRun(); }
                 if (target === 'merge') loadMergeSettings();
             });
         });
@@ -183,7 +185,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                             '<td>' + (ep.HasMarkers ? toMMSS(ep.IntroEndSeconds)   : '-') + '</td>' +
                             '<td>' + len + '</td>' +
                             '<td>' + (ep.HasMarkers
-                                ? '<span class="sc-badge-ok">Set</span>'
+                                ? '<span class="sc-badge-green">Set</span>'
                                 : '<span class="sc-badge-none">None</span>') + '</td>' +
                             '<td>' + delBtn + '</td>';
                         tbody.appendChild(tr);
@@ -225,15 +227,42 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                         return;
                     }
                     rows.forEach(function (row) {
-                        var tr = document.createElement('tr');
-                        tr.innerHTML =
-                            '<td>' + escapeHtml(row.SeriesName) + '</td>' +
+                        var hasSeasons = row.Seasons && row.Seasons.length > 0;
+                        var uid = 'fpdb-' + row.SeriesId;
+
+                        var seriesTr = document.createElement('tr');
+                        seriesTr.innerHTML =
+                            '<td>' +
+                                (hasSeasons
+                                    ? '<button class="sc-fpdb-toggle emby-button" data-target="' + uid + '" style="padding:2px 4px;margin-right:4px;min-width:0;background:none;border:none;cursor:pointer;vertical-align:middle;"><i class="md-icon sc-fpdb-chevron" style="font-size:18px;">chevron_right</i></button>'
+                                    : '<span style="display:inline-block;width:26px;"></span>') +
+                                escapeHtml(row.SeriesName) +
+                            '</td>' +
                             '<td style="text-align:center;">' + row.EpisodeCount + '</td>' +
-                            '<td style="text-align:right;">' +
-                                '<button class="sc-fpdb-del-fp emby-button sc-btn-danger" data-sid="' + row.SeriesId + '" style="margin-right:6px;">Delete fingerprints</button>' +
+                            '<td style="text-align:right;white-space:nowrap;">' +
+                                '<button class="sc-fpdb-del-fp emby-button sc-btn-danger" data-sid="' + row.SeriesId + '" style="margin-right:4px;">Delete fingerprints</button>' +
+                                '<button class="sc-fpdb-del-db emby-button sc-btn-danger" data-sid="' + row.SeriesId + '" style="margin-right:4px;">Delete from database</button>' +
                                 '<button class="sc-fpdb-del-all emby-button sc-btn-danger" data-sid="' + row.SeriesId + '">Delete all</button>' +
                             '</td>';
-                        tbody.appendChild(tr);
+                        tbody.appendChild(seriesTr);
+
+                        if (hasSeasons) {
+                            row.Seasons.forEach(function (season) {
+                                var seasonTr = document.createElement('tr');
+                                seasonTr.classList.add('sc-fpdb-season-row');
+                                seasonTr.setAttribute('data-parent', uid);
+                                seasonTr.style.display = 'none';
+                                seasonTr.innerHTML =
+                                    '<td style="padding-left:36px;font-size:13px;color:#aaa;">' + escapeHtml(season.SeasonName) + '</td>' +
+                                    '<td style="text-align:center;font-size:13px;color:#aaa;">' + season.EpisodeCount + '</td>' +
+                                    '<td style="text-align:right;white-space:nowrap;">' +
+                                        '<button class="sc-fpdb-del-fp emby-button sc-btn-danger" data-seasonid="' + season.SeasonId + '" style="margin-right:4px;">Delete fingerprints</button>' +
+                                        '<button class="sc-fpdb-del-db emby-button sc-btn-danger" data-seasonid="' + season.SeasonId + '" style="margin-right:4px;">Delete from database</button>' +
+                                        '<button class="sc-fpdb-del-all emby-button sc-btn-danger" data-seasonid="' + season.SeasonId + '">Delete all</button>' +
+                                    '</td>';
+                                tbody.appendChild(seasonTr);
+                            });
+                        }
                     });
                     table.style.display = '';
                 })
@@ -288,7 +317,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                     badge = '<span class="sc-badge-ok" style="display:inline-flex;align-items:center;gap:5px;">' +
                             '<span class="sc-spinner" style="width:10px;height:10px;border-width:2px;flex-shrink:0;"></span>Running</span>';
                 } else if (item.status === 'done') {
-                    badge = '<span class="sc-badge-ok">Complete</span>';
+                    badge = '<span class="sc-badge-green">Complete</span>';
                 } else if (item.status === 'failed') {
                     badge = '<span class="sc-badge-err">Failed</span>';
                 } else {
@@ -459,7 +488,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                         tr.innerHTML =
                             '<td>' + escapeHtml(seriesLabel) + '</td>' +
                             '<td>' + escapeHtml(String(epId)) + '</td>' +
-                            '<td><span class="' + (isError ? 'sc-badge-none' : 'sc-badge-ok') + '">' + escapeHtml(msg) + '</span></td>';
+                            '<td><span class="' + (isError ? 'sc-badge-none' : 'sc-badge-green') + '">' + escapeHtml(msg) + '</span></td>';
                         tbody.appendChild(tr);
                     });
                 }
@@ -563,16 +592,49 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         });
 
         view.querySelector('#fpDbTbody').addEventListener('click', function (e) {
-            var btn = e.target.closest('.sc-fpdb-del-fp, .sc-fpdb-del-all');
+            var toggle = e.target.closest('.sc-fpdb-toggle');
+            if (toggle) {
+                var target     = toggle.getAttribute('data-target');
+                var seasonRows = view.querySelectorAll('.sc-fpdb-season-row[data-parent="' + target + '"]');
+                var chevron    = toggle.querySelector('.sc-fpdb-chevron');
+                var expanded   = seasonRows.length > 0 && seasonRows[0].style.display !== 'none';
+                seasonRows.forEach(function (r) { r.style.display = expanded ? 'none' : ''; });
+                if (chevron) chevron.textContent = expanded ? 'chevron_right' : 'expand_more';
+                return;
+            }
+
+            var btn = e.target.closest('.sc-fpdb-del-fp, .sc-fpdb-del-db, .sc-fpdb-del-all');
             if (!btn) return;
-            var sid  = btn.getAttribute('data-sid');
-            var all  = btn.classList.contains('sc-fpdb-del-all');
-            var msg  = all
-                ? 'Delete ALL intro markers AND fingerprint cache for this series?'
-                : 'Delete the fingerprint cache for this series?';
-            var path = all
-                ? 'strmcompanion/intro/all/series/' + sid
-                : 'strmcompanion/fingerprints/series/' + sid;
+
+            var sid      = btn.getAttribute('data-sid');
+            var seasonId = btn.getAttribute('data-seasonid');
+            var isAll    = btn.classList.contains('sc-fpdb-del-all');
+            var isDb     = btn.classList.contains('sc-fpdb-del-db');
+
+            var msg, path;
+            if (seasonId) {
+                if (isAll) {
+                    msg  = 'Delete ALL intro markers AND fingerprint cache for this season?';
+                    path = 'strmcompanion/intro/all/season/' + seasonId;
+                } else if (isDb) {
+                    msg  = 'Delete intro markers from the database for this season?';
+                    path = 'strmcompanion/intro/markers/season/' + seasonId;
+                } else {
+                    msg  = 'Delete the fingerprint cache for this season?';
+                    path = 'strmcompanion/fingerprints/season/' + seasonId;
+                }
+            } else {
+                if (isAll) {
+                    msg  = 'Delete ALL intro markers AND fingerprint cache for this series?';
+                    path = 'strmcompanion/intro/all/series/' + sid;
+                } else if (isDb) {
+                    msg  = 'Delete intro markers from the database for this series?';
+                    path = 'strmcompanion/intro/markers/series/' + sid;
+                } else {
+                    msg  = 'Delete the fingerprint cache for this series?';
+                    path = 'strmcompanion/fingerprints/series/' + sid;
+                }
+            }
             confirmDelete(msg, path, loadFingerprintDatabase);
         });
 
@@ -638,11 +700,15 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         }
 
         function startMediaScan() {
-            view.querySelector('#mediaScanControls').style.display     = 'none';
-            view.querySelector('#mediaProgressSection').style.display  = '';
-            view.querySelector('#mediaResultsSection').style.display   = 'none';
-            view.querySelector('#mediaStatusText').textContent         = 'Starting...';
-            view.querySelector('#mediaProgressBar').style.width        = '0%';
+            mediaLiveRendered = {};
+            view.querySelector('#mediaHistoryRows').innerHTML         = '';
+            view.querySelector('#mediaHistorySection').style.display  = 'none';
+            view.querySelectorAll('[data-mfilter]').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-mfilter') === 'all'); });
+            view.querySelector('#mediaScanControls').style.display    = 'none';
+            view.querySelector('#mediaProgressSection').style.display = '';
+            view.querySelector('#mediaResultsSection').style.display  = 'none';
+            view.querySelector('#mediaStatusText').textContent        = 'Starting...';
+            view.querySelector('#mediaProgressBar').style.width       = '0%';
 
             apiPost('strmcompanion/mediainfo/scan')
                 .then(function (resp) { mediaJobId = resp.JobId; startMediaPoll(); })
@@ -659,12 +725,63 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         function stopMediaPoll() {
             if (mediaPoll) { clearInterval(mediaPoll); mediaPoll = null; }
         }
+        function updateMediaHistoryTable(job) {
+            var results = job.EpisodeResults || {};
+            var titles  = job.ItemTitles    || {};
+            var tbody   = view.querySelector('#mediaHistoryRows');
+            var section = view.querySelector('#mediaHistorySection');
+            var scroll  = view.querySelector('#mediaHistoryScroll');
+            var added   = false;
+
+            Object.keys(results).forEach(function (id) {
+                if (mediaLiveRendered[id]) return;
+                mediaLiveRendered[id] = true;
+                added = true;
+                var msg   = results[id] || '';
+                var title = titles[id]  || id;
+                var isErr  = msg.toLowerCase().indexOf('error') === 0;
+                var isNone = msg === 'No media info found';
+                var badge  = isErr ? 'err' : isNone ? 'none' : 'green';
+                var badgeCls = isErr ? 'sc-badge-err' : isNone ? 'sc-badge-none' : 'sc-badge-green';
+                var tr = document.createElement('tr');
+                tr.setAttribute('data-mbadge', badge);
+                tr.innerHTML =
+                    '<td>' + escapeHtml(title) + '</td>' +
+                    '<td><span class="' + badgeCls + '">' + escapeHtml(msg) + '</span></td>';
+                tbody.appendChild(tr);
+            });
+
+            if (added) {
+                section.style.display = '';
+                applyMediaHistoryFilter();
+                scroll.scrollTop = scroll.scrollHeight;
+            }
+        }
+
+        function applyMediaHistoryFilter() {
+            var active = view.querySelector('[data-mfilter].active');
+            var filter = active ? active.getAttribute('data-mfilter') : 'all';
+            view.querySelectorAll('#mediaHistoryRows tr').forEach(function (tr) {
+                var badge = tr.getAttribute('data-mbadge');
+                tr.style.display = (filter === 'all' || badge === filter) ? '' : 'none';
+            });
+        }
+
+        view.querySelectorAll('[data-mfilter]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                view.querySelectorAll('[data-mfilter]').forEach(function (b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                applyMediaHistoryFilter();
+            });
+        });
+
         function pollMediaJob() {
             if (!mediaJobId) return;
             apiGet('strmcompanion/mediainfo/job/' + mediaJobId)
                 .then(function (job) {
                     view.querySelector('#mediaProgressBar').style.width = (job.ProgressPercent || 0) + '%';
                     view.querySelector('#mediaStatusText').textContent   = job.CurrentActivity || '';
+                    updateMediaHistoryTable(job);
                     if (job.Status === 'Completed' || job.Status === 'Failed' || job.Status === 'Cancelled') {
                         stopMediaPoll();
                         showMediaResults(job);
@@ -679,33 +796,23 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
             var titleEl   = view.querySelector('#mediaResultTitle');
             var summaryEl = view.querySelector('#mediaResultSummary');
-            var tbody     = view.querySelector('#mediaResultRows');
+            var count     = Object.keys(job.EpisodeResults || {}).length;
 
             if (job.Status === 'Completed') {
-                titleEl.textContent   = 'Scan complete';
-                summaryEl.textContent = Object.keys(job.EpisodeResults || {}).length + ' item(s) processed.';
+                titleEl.textContent = 'Scan complete';
+                titleEl.style.color = '#52B54B';
+                summaryEl.textContent = count + ' item(s) processed.';
             } else if (job.Status === 'Cancelled') {
-                titleEl.textContent   = 'Scan cancelled';
-                summaryEl.textContent = 'The scan was cancelled.';
+                titleEl.textContent = 'Scan cancelled';
+                titleEl.style.color = '#aaa';
+                summaryEl.textContent = count > 0 ? count + ' item(s) processed before cancel.' : 'The scan was cancelled.';
             } else {
-                titleEl.textContent   = 'Scan failed';
+                titleEl.textContent = 'Scan failed';
+                titleEl.style.color = '#cc0000';
                 summaryEl.textContent = job.ErrorMessage || 'An error occurred.';
             }
 
-            tbody.innerHTML = '';
-            var results = job.EpisodeResults || {};
-            var titles  = job.ItemTitles    || {};
-            Object.keys(results).forEach(function (id) {
-                var msg   = results[id] || '';
-                var title = titles[id] || id;
-                var isError = msg.toLowerCase().indexOf('error') === 0 || msg.toLowerCase().indexOf('no streams') === 0;
-                var tr = document.createElement('tr');
-                tr.innerHTML =
-                    '<td>' + escapeHtml(title) + '</td>' +
-                    '<td><span class="' + (isError ? 'sc-badge-err' : 'sc-badge-ok') + '">' + escapeHtml(msg) + '</span></td>';
-                tbody.appendChild(tr);
-            });
-
+            updateMediaHistoryTable(job);
             loadMediaStats();
         }
 
@@ -714,6 +821,57 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             view.querySelector('#mediaProgressSection').style.display = 'none';
             view.querySelector('#mediaResultsSection').style.display  = 'none';
             mediaJobId = null;
+        }
+
+        function loadMediaLastRun() {
+            if (mediaJobId) return;
+            if (Object.keys(mediaLiveRendered).length > 0) return;
+            if (view.querySelector('#mediaResultsSection').style.display !== 'none') return;
+
+            apiGet('strmcompanion/mediainfo/jobs')
+                .then(function (jobs) {
+                    // Reconnect to a running job
+                    var running = (jobs || []).find(function (j) { return j.Status === 'Running'; });
+                    if (running) {
+                        mediaJobId = running.JobId;
+                        view.querySelector('#mediaScanControls').style.display    = 'none';
+                        view.querySelector('#mediaResultsSection').style.display  = 'none';
+                        view.querySelector('#mediaProgressSection').style.display = '';
+                        view.querySelector('#mediaStatusText').textContent        = running.CurrentActivity || 'Resuming...';
+                        view.querySelector('#mediaProgressBar').style.width       = (running.ProgressPercent || 0) + '%';
+                        startMediaPoll();
+                        return null;
+                    }
+                    var finished = (jobs || []).filter(function (j) {
+                        return j.Status === 'Completed' || j.Status === 'Cancelled' || j.Status === 'Failed';
+                    });
+                    if (finished.length === 0) return null;
+                    return apiGet('strmcompanion/mediainfo/job/' + finished[0].JobId);
+                })
+                .then(function (job) {
+                    if (!job || !job.EpisodeResults) return;
+                    updateMediaHistoryTable(job);
+                    var titleEl   = view.querySelector('#mediaResultTitle');
+                    var summaryEl = view.querySelector('#mediaResultSummary');
+                    var count     = Object.keys(job.EpisodeResults).length;
+                    if (job.Status === 'Completed') {
+                        titleEl.textContent   = 'Scan complete';
+                        titleEl.style.color   = '#52B54B';
+                        summaryEl.textContent = count + ' item(s) processed.';
+                    } else if (job.Status === 'Cancelled') {
+                        titleEl.textContent   = 'Scan cancelled';
+                        titleEl.style.color   = '#aaa';
+                        summaryEl.textContent = count > 0 ? count + ' item(s) processed before cancel.' : 'The scan was cancelled.';
+                    } else {
+                        titleEl.textContent   = 'Scan failed';
+                        titleEl.style.color   = '#cc0000';
+                        summaryEl.textContent = job.ErrorMessage || 'An error occurred.';
+                    }
+                    view.querySelector('#mediaScanControls').style.display    = 'none';
+                    view.querySelector('#mediaProgressSection').style.display = 'none';
+                    view.querySelector('#mediaResultsSection').style.display  = '';
+                })
+                .catch(function () {});
         }
 
         view.querySelector('#btnStartScan').addEventListener('click', startMediaScan);
@@ -862,6 +1020,19 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         function loadMergeLastRun() {
             apiGet('strmcompanion/mergeversion/jobs')
                 .then(function (jobs) {
+                    // Reconnect to a running job
+                    var running = (jobs || []).find(function (j) { return j.Status === 'Running'; });
+                    if (running && !mergeJobId && Object.keys(mergeLiveRendered).length === 0) {
+                        mergeJobId = running.JobId;
+                        view.querySelector('#mergeControls').style.display        = 'none';
+                        view.querySelector('#mergeResultsSection').style.display  = 'none';
+                        view.querySelector('#mergeProgressSection').style.display = '';
+                        view.querySelector('#mergeStatusText').textContent        = running.CurrentActivity || 'Resuming...';
+                        view.querySelector('#mergeProgressBar').style.width       = (running.ProgressPercent || 0) + '%';
+                        startMergePoll();
+                        return;
+                    }
+
                     var finished = (jobs || []).filter(function (j) {
                         return j.Status === 'Completed' || j.Status === 'Cancelled' || j.Status === 'Failed';
                     });
@@ -888,6 +1059,59 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                     view.querySelector('#mergeLastRunTime').textContent = dateStr ? dateStr + ' — ' + statusLabel : statusLabel;
 
                     view.querySelector('#mergeLastRun').style.display = '';
+
+                    if (!mergeJobId && Object.keys(mergeLiveRendered).length === 0
+                            && view.querySelector('#mergeResultsSection').style.display === 'none') {
+                        restoreMergeResults(job.JobId);
+                    }
+                })
+                .catch(function () {});
+        }
+
+        function restoreMergeResults(jobId) {
+            apiGet('strmcompanion/mergeversion/job/' + jobId)
+                .then(function (fullJob) {
+                    if (!fullJob) return;
+                    var titleEl   = view.querySelector('#mergeResultTitle');
+                    var summaryEl = view.querySelector('#mergeResultSummary');
+                    var tbody     = view.querySelector('#mergeResultRows');
+                    var results   = fullJob.EpisodeResults || {};
+                    var keys      = Object.keys(results);
+                    var merged    = keys.filter(function (k) { return (results[k] || '').indexOf('Merged') === 0; }).length;
+                    var failed    = keys.filter(function (k) { return (results[k] || '').toLowerCase().indexOf('error') === 0; }).length;
+
+                    if (fullJob.Status === 'Completed') {
+                        titleEl.textContent   = 'Merge complete';
+                        titleEl.style.color   = '#52B54B';
+                        summaryEl.textContent = keys.length === 0
+                            ? 'No duplicates found — nothing to merge.'
+                            : merged + ' item(s) merged' + (failed > 0 ? ', ' + failed + ' failed.' : '.');
+                    } else if (fullJob.Status === 'Cancelled') {
+                        titleEl.textContent   = 'Merge cancelled';
+                        titleEl.style.color   = '#aaa';
+                        summaryEl.textContent = merged > 0 ? merged + ' item(s) merged before cancel.' : 'Cancelled before any merges.';
+                    } else {
+                        titleEl.textContent   = 'Merge failed';
+                        titleEl.style.color   = '#cc0000';
+                        summaryEl.textContent = fullJob.ErrorMessage || 'An error occurred.';
+                    }
+
+                    var titles = fullJob.ItemTitles || {};
+                    tbody.innerHTML = '';
+                    keys.forEach(function (id) {
+                        var msg     = results[id] || '';
+                        var isError = msg.toLowerCase().indexOf('error') === 0;
+                        var title   = titles[id] || id;
+                        var tr = document.createElement('tr');
+                        tr.innerHTML =
+                            '<td>' + escapeHtml(title) + '</td>' +
+                            '<td><span class="' + (isError ? 'sc-badge-err' : 'sc-badge-green') + '">' + escapeHtml(msg) + '</span></td>';
+                        tbody.appendChild(tr);
+                    });
+
+                    view.querySelector('#mergeControls').style.display        = 'none';
+                    view.querySelector('#mergeProgressSection').style.display = 'none';
+                    view.querySelector('#mergeResultsSection').style.display  = '';
                 })
                 .catch(function () {});
         }
@@ -924,6 +1148,9 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         }
 
         function startMerge() {
+            mergeLiveRendered = {};
+            view.querySelector('#mergeScanLiveRows').innerHTML        = '';
+            view.querySelector('#mergeScanLiveWrap').style.display    = 'none';
             view.querySelector('#mergeControls').style.display        = 'none';
             view.querySelector('#mergeProgressSection').style.display = '';
             view.querySelector('#mergeResultsSection').style.display  = 'none';
@@ -950,12 +1177,41 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             if (mergePoll) { clearInterval(mergePoll); mergePoll = null; }
         }
 
+        function updateMergeLiveTable(job) {
+            var results = job.EpisodeResults || {};
+            var titles  = job.ItemTitles    || {};
+            var tbody   = view.querySelector('#mergeScanLiveRows');
+            var wrap    = view.querySelector('#mergeScanLiveWrap');
+            var added   = false;
+
+            Object.keys(results).forEach(function (id) {
+                if (mergeLiveRendered[id]) return;
+                mergeLiveRendered[id] = true;
+                added = true;
+                var msg   = results[id] || '';
+                var title = titles[id]  || id;
+                var isErr = msg.toLowerCase().indexOf('error') === 0;
+                var badgeCls = isErr ? 'sc-badge-err' : 'sc-badge-green';
+                var tr = document.createElement('tr');
+                tr.innerHTML =
+                    '<td>' + escapeHtml(title) + '</td>' +
+                    '<td><span class="' + badgeCls + '">' + escapeHtml(msg) + '</span></td>';
+                tbody.appendChild(tr);
+            });
+
+            if (added) {
+                wrap.style.display = '';
+                wrap.querySelector('div').scrollTop = wrap.querySelector('div').scrollHeight;
+            }
+        }
+
         function pollMergeJob() {
             if (!mergeJobId) return;
             apiGet('strmcompanion/mergeversion/job/' + mergeJobId)
                 .then(function (job) {
                     view.querySelector('#mergeProgressBar').style.width = (job.ProgressPercent || 0) + '%';
                     view.querySelector('#mergeStatusText').textContent   = job.CurrentActivity || '';
+                    updateMergeLiveTable(job);
                     if (job.Status === 'Completed' || job.Status === 'Failed' || job.Status === 'Cancelled') {
                         stopMergePoll();
                         showMergeResults(job);
@@ -978,7 +1234,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
             if (job.Status === 'Completed') {
                 titleEl.textContent   = 'Merge complete';
-                titleEl.style.color   = '#00a4dc';
+                titleEl.style.color   = '#52B54B';
                 if (keys.length === 0) {
                     summaryEl.textContent = 'No duplicates found — nothing to merge.';
                 } else {
@@ -1003,7 +1259,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 var tr = document.createElement('tr');
                 tr.innerHTML =
                     '<td>' + escapeHtml(title) + '</td>' +
-                    '<td><span class="' + (isError ? 'sc-badge-err' : 'sc-badge-ok') + '">' + escapeHtml(msg) + '</span></td>';
+                    '<td><span class="' + (isError ? 'sc-badge-err' : 'sc-badge-green') + '">' + escapeHtml(msg) + '</span></td>';
                 tbody.appendChild(tr);
             });
 

@@ -8,6 +8,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Providers;
@@ -23,27 +24,28 @@ namespace StrmCompanion.MergeVersion
 
         private readonly ILibraryManager _libraryManager;
         private readonly IProviderManager _providerManager;
-        private readonly IDirectoryService _directoryService;
+        private readonly IFileSystem _fileSystem;
         private readonly JobManager _jobManager;
         private readonly ILogger _logger;
 
         public MergeVersionService(
             ILibraryManager libraryManager,
             IProviderManager providerManager,
-            IDirectoryService directoryService,
+            IFileSystem fileSystem,
             JobManager jobManager,
             ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _providerManager = providerManager;
-            _directoryService = directoryService;
+            _fileSystem = fileSystem;
             _jobManager = jobManager;
             _logger = logManager.GetLogger(nameof(MergeVersionService));
         }
 
-        public string StartMerge(CollectionFolder currentScanLibrary, CancellationToken externalCt)
+        public string StartMerge(CollectionFolder currentScanLibrary, CancellationToken externalCt, string existingJobId = null)
         {
-            var job = _jobManager.CreateJob("merge-version", 0, "Merge Version", null, null);
+            var job = (existingJobId != null ? _jobManager?.GetJob(existingJobId) : null)
+                      ?? _jobManager.CreateJob("merge-version", 0, "Merge Version", null, null);
             var token = _jobManager.GetCancellationToken(job.JobId);
             Task.Run(() => RunAsync(job, currentScanLibrary, token), token);
             return job.JobId;
@@ -299,20 +301,43 @@ namespace StrmCompanion.MergeVersion
                 AncestorIds = parents
             }).OfType<Episode>()
               .Where(e => !e.IsSecondaryMergedItemInSameFolder)
+              .Where(e => e.ProviderIds != null && ProviderKeys.Any(pk =>
+              {
+                  string v;
+                  return e.ProviderIds.TryGetValue(pk, out v) && !string.IsNullOrEmpty(v);
+              }))
               .ToList();
 
-            var groups = episodes
-                .Where(e => e.ParentIndexNumber.HasValue && e.IndexNumber.HasValue)
-                .GroupBy(e => new
+            var parentMap = episodes.ToDictionary(e => e.InternalId, e => e.InternalId);
+            var keyToIds  = new Dictionary<string, List<long>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var ep in episodes)
+            {
+                foreach (var pk in ProviderKeys)
                 {
-                    SeriesKey = !string.IsNullOrEmpty(e.SeriesPresentationUniqueKey)
-                        ? e.SeriesPresentationUniqueKey
-                        : e.SeriesId.ToString(),
-                    Season  = e.ParentIndexNumber.Value,
-                    Episode = e.IndexNumber.Value
-                })
+                    string val;
+                    if (!ep.ProviderIds.TryGetValue(pk, out val) || string.IsNullOrEmpty(val)) continue;
+                    var composite = pk + ":" + val.Trim();
+                    List<long> list;
+                    if (!keyToIds.TryGetValue(composite, out list))
+                        keyToIds[composite] = list = new List<long>();
+                    list.Add(ep.InternalId);
+                }
+            }
+
+            foreach (var list in keyToIds.Values)
+            {
+                if (list.Count < 2) continue;
+                var root = list[0];
+                for (int i = 1; i < list.Count; i++)
+                    Union(root, list[i], parentMap);
+            }
+
+            var idToEpisode = episodes.ToDictionary(e => e.InternalId);
+            var groups = parentMap.Keys
+                .GroupBy(id => Find(id, parentMap))
                 .Where(g => g.Count() >= 2)
-                .Select(g => g.Cast<BaseItem>().ToList())
+                .Select(g => g.Select(id => (BaseItem)idToEpisode[id]).ToList())
                 .Where(group => !AlreadyMerged(group))
                 .ToList();
 
@@ -381,7 +406,7 @@ namespace StrmCompanion.MergeVersion
             try
             {
                 var libraryOptions = _libraryManager.GetLibraryOptions(series);
-                var refreshOptions = new MetadataRefreshOptions(_directoryService)
+                var refreshOptions = new MetadataRefreshOptions(new DirectoryService(_logger, _fileSystem))
                 {
                     MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
                     ImageRefreshMode    = MetadataRefreshMode.ValidationOnly,

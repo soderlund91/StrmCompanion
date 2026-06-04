@@ -7,6 +7,7 @@ using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Services;
 using StrmCompanion.Jobs;
+using StrmCompanion.ScheduledTasks;
 
 namespace StrmCompanion.Api
 {
@@ -85,12 +86,20 @@ namespace StrmCompanion.Api
 
         public object Post(StartMergeVersion request)
         {
-            var svc = PluginEntryPoint.MergeVersionService;
-            if (svc == null)
-                throw new Exception("MergeVersionService is not initialized");
+            var jobManager = PluginEntryPoint.JobManager;
+            if (jobManager == null)
+                throw new Exception("JobManager is not initialized");
 
-            var jobId = svc.StartMerge(null, CancellationToken.None);
-            return new StartJobResponse { JobId = jobId };
+            var running = jobManager.GetAllJobs()
+                .FirstOrDefault(j => j.TaskId == "merge-version" && j.Status == JobStatus.Running);
+            if (running != null)
+                return new StartJobResponse { JobId = running.JobId };
+
+            var job = jobManager.CreateJob("merge-version", 0, "Merge Version", null, null);
+            MergeVersionScheduledTask.SetPendingJobId(job.JobId);
+            PluginEntryPoint.TaskManager?.QueueScheduledTask<MergeVersionScheduledTask>();
+
+            return new StartJobResponse { JobId = job.JobId };
         }
 
         public object Get(GetMergeVersionJobStatus request)
