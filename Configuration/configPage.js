@@ -1389,6 +1389,17 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 view.querySelector('#btnCloseHelp').addEventListener('click', function () { helpOverlay.classList.remove('modal-visible'); });
                 helpOverlay.addEventListener('click', function (e) { if (e.target === helpOverlay) helpOverlay.classList.remove('modal-visible'); });
 
+                helpOverlay.querySelectorAll('.help-nav-btn').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        var target = btn.getAttribute('data-help');
+                        helpOverlay.querySelectorAll('.help-nav-btn').forEach(function (b) { b.classList.remove('active'); });
+                        helpOverlay.querySelectorAll('.help-page').forEach(function (p) { p.classList.remove('active'); });
+                        btn.classList.add('active');
+                        var page = helpOverlay.querySelector('#helpPage' + target.charAt(0).toUpperCase() + target.slice(1));
+                        if (page) page.classList.add('active');
+                    });
+                });
+
                 view.querySelector('#btnOpenBugReport').addEventListener('click', function () { bugOverlay.classList.add('modal-visible'); });
                 view.querySelector('#btnCloseBugReport').addEventListener('click', function () { bugOverlay.classList.remove('modal-visible'); });
                 bugOverlay.addEventListener('click', function (e) { if (e.target === bugOverlay) bugOverlay.classList.remove('modal-visible'); });

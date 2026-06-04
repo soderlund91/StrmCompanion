@@ -146,6 +146,60 @@
         .sc-expand-header.sc-open .sc-expand-chevron { transform: rotate(180deg); }
         .sc-expand-body { padding: 16px; border: 1px solid var(--line-color, #333); border-top: none; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
 
+        /* ── Help modal styles ───────────────────────────────────────── */
+        .help-nav {
+            display: flex; gap: 0; border-bottom: 2px solid #3a3a3a; margin-bottom: 20px;
+        }
+        .help-nav-btn {
+            flex: 1; padding: 9px 6px; background: transparent; border: none; color: #888;
+            font-size: 12px; font-weight: 600; cursor: pointer; text-align: center;
+            border-bottom: 3px solid transparent; margin-bottom: -2px;
+            transition: color 0.2s, border-color 0.2s; letter-spacing: .02em;
+        }
+        .help-nav-btn.active { color: #52B54B; border-bottom-color: #52B54B; }
+        .help-nav-btn:hover:not(.active) { color: #ccc; }
+
+        .help-page { display: none; }
+        .help-page.active { display: block; }
+
+        .help-intro-box {
+            background: rgba(0,164,220,.08); border: 1px solid rgba(0,164,220,.25);
+            border-radius: 8px; padding: 14px 16px; margin-bottom: 18px;
+            font-size: 13px; line-height: 1.65; color: #ccc;
+        }
+        .help-section-title {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 14px; font-weight: 700; color: #e0e0e0;
+            margin: 20px 0 8px;
+        }
+        .help-section-title:first-child { margin-top: 0; }
+        .help-section-title .md-icon { color: #52B54B; font-size: 1.15em; }
+        .help-desc { font-size: 13px; color: #bbb; line-height: 1.65; margin: 0 0 14px; }
+        .help-steps { margin: 0 0 14px; padding: 0; list-style: none; counter-reset: step; }
+        .help-steps li {
+            counter-increment: step; display: flex; gap: 10px; align-items: flex-start;
+            font-size: 13px; color: #bbb; line-height: 1.6; margin-bottom: 8px;
+        }
+        .help-steps li::before {
+            content: counter(step); flex-shrink: 0; width: 22px; height: 22px;
+            border-radius: 50%; background: rgba(82,181,75,.2); color: #52B54B;
+            font-size: 11px; font-weight: 700; display: flex; align-items: center;
+            justify-content: center; margin-top: 1px;
+        }
+        .help-tip {
+            background: rgba(255,180,0,.07); border-left: 3px solid #cc8800;
+            border-radius: 0 6px 6px 0; padding: 10px 12px;
+            font-size: 12px; color: #bbb; line-height: 1.6; margin: 12px 0;
+        }
+        .help-tip strong { color: #e8a020; }
+        .help-divider { border: none; border-top: 1px solid #333; margin: 20px 0; }
+        .help-tag {
+            display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 11px;
+            font-weight: 600; vertical-align: middle; margin: 0 2px;
+        }
+        .help-tag-blue  { background: rgba(0,164,220,.15); color: #00a4dc; }
+        .help-tag-green { background: rgba(82,181,75,.15);  color: #52B54B; }
+
         /* ── Footer ──────────────────────────────────────────────────── */
         .plugin-footer {
             position: fixed;
@@ -709,19 +763,209 @@
 
     <!-- ── Help modal ───────────────────────────────────────────────── -->
     <div id="helpModalOverlay" class="modal-backdrop">
-        <div class="modal-content">
+        <div class="modal-content" style="max-width:680px;">
             <div class="modal-header-bar">
                 <i class="md-icon modal-header-icon">help</i>
                 <div>
-                    <h2 class="modal-header-title">Help</h2>
-                    <span style="opacity:0.9;font-size:0.9em;">StrmCompanion documentation</span>
+                    <h2 class="modal-header-title">StrmCompanion — Help</h2>
+                    <span style="opacity:0.9;font-size:0.9em;">A quick guide to all three features</span>
                 </div>
             </div>
             <div class="modal-body-scroll">
-                <p style="color:#aaa;font-size:0.95em;">Coming soon.</p>
-                <div style="text-align:right;margin-top:20px;">
+
+                <!-- ── Tab nav ───────────────────────────────────────── -->
+                <div class="help-nav">
+                    <button class="help-nav-btn active" data-help="overview">Overview</button>
+                    <button class="help-nav-btn" data-help="intro">Intro Detection</button>
+                    <button class="help-nav-btn" data-help="media">Media Info</button>
+                    <button class="help-nav-btn" data-help="merge">Merge Version</button>
+                </div>
+
+                <!-- ════════════════════════════════════════════════════
+                     PAGE: OVERVIEW
+                ════════════════════════════════════════════════════════ -->
+                <div class="help-page active" id="helpPageOverview">
+
+                    <div class="help-intro-box">
+                        <strong style="color:#e0e0e0;">StrmCompanion</strong> is an Emby plugin that adds three features Emby does not provide out of the box.
+                        Each feature lives on its own tab at the top of this page.
+                    </div>
+
+                    <div class="help-section-title">
+                        <i class="md-icon">skip_next</i> Intro Detection
+                    </div>
+                    <p class="help-desc">
+                        Listens to the audio of TV episodes across a season and finds the part that repeats in every episode — the opening theme.
+                        Once detected, a <span class="help-tag help-tag-blue">Skip Intro</span> button will appear in the Emby player so viewers can jump past it with one click.
+                    </p>
+
+                    <hr class="help-divider">
+
+                    <div class="help-section-title">
+                        <i class="md-icon">info</i> Media Info
+                    </div>
+                    <p class="help-desc">
+                        When your library contains <em>.strm</em> files — small text files that point to an online stream (e.g. IPTV) — Emby cannot read their technical details on its own.
+                        This feature connects to each stream and retrieves the codec, resolution, audio format and other properties so they show up correctly in Emby.
+                    </p>
+
+                    <hr class="help-divider">
+
+                    <div class="help-section-title">
+                        <i class="md-icon">merge</i> Merge Version
+                    </div>
+                    <p class="help-desc">
+                        If you have the same movie or episode in multiple qualities (for example both a 1080p and a 4K copy), Emby can group them as <em>alternate versions</em> of the same title.
+                        This feature does that automatically by matching titles that share the same IMDb or TVDb ID.
+                    </p>
+
+                </div>
+
+                <!-- ════════════════════════════════════════════════════
+                     PAGE: INTRO DETECTION
+                ════════════════════════════════════════════════════════ -->
+                <div class="help-page" id="helpPageIntro">
+
+                    <div class="help-intro-box">
+                        Intro Detection works by creating a short <em>audio fingerprint</em> for each episode and then comparing them.
+                        The segment of audio that is identical across multiple episodes is identified as the intro.
+                        No internet connection is required — all analysis runs locally on your server.
+                    </div>
+
+                    <div class="help-section-title"><i class="md-icon">build</i> Requirements</div>
+                    <p class="help-desc">
+                        FFmpeg with the <strong>Chromaprint</strong> audio muxer must be available on your server.
+                        You can use the FFmpeg bundled with Emby or point to a custom installation in Settings.
+                        At least <strong>two episodes</strong> in the same season are needed to detect a match.
+                    </p>
+
+                    <hr class="help-divider">
+
+                    <div class="help-section-title"><i class="md-icon">settings</i> Configure settings (first time)</div>
+                    <ol class="help-steps">
+                        <li>Click <strong>Intro Detection — Settings</strong> to expand the settings panel.</li>
+                        <li><strong>Fingerprint cache path</strong> — leave empty to use the default Emby plugin folder, or enter a custom path if you want the fingerprint files stored elsewhere.</li>
+                        <li><strong>FFmpeg path</strong> — leave empty to use Emby's built-in FFmpeg. Only change this if you need a specific version.</li>
+                        <li>Adjust <strong>Fingerprint duration</strong> (how many minutes of each episode to analyse — 5 minutes is enough for most shows).</li>
+                        <li>Set <strong>Minimum intro length</strong> to roughly 60–80 % of your show's actual intro length.</li>
+                        <li>Click <span class="help-tag help-tag-green">Save settings</span>.</li>
+                    </ol>
+
+                    <hr class="help-divider">
+
+                    <div class="help-section-title"><i class="md-icon">play_arrow</i> Run Intro Detection</div>
+                    <ol class="help-steps">
+                        <li>Under <strong>Select what to analyse</strong>, choose a <strong>Series</strong> from the dropdown.</li>
+                        <li>Choose a <strong>Season</strong>, or leave it as <em>All seasons</em> to queue the entire series.</li>
+                        <li>Click <strong>Add to queue</strong>. Repeat for more series if you like.</li>
+                        <li>Click <strong>Run</strong> to start the analysis. A progress bar and live status will appear.</li>
+                        <li>When done, the results table shows each episode and whether an intro was found.</li>
+                    </ol>
+
+                    <hr class="help-divider">
+
+                    <div class="help-section-title"><i class="md-icon">playlist_play</i> View and manage markers</div>
+                    <p class="help-desc">
+                        After a successful run, expand <strong>Current intro markers</strong> at the bottom of the page to see a list of all detected markers.
+                        You can delete markers for a single season or an entire series using the red buttons.
+                        <em>Clear fingerprint cache</em> removes the stored audio fingerprint files from disk but leaves the markers intact.
+                    </p>
+
+                    <div class="help-tip">
+                        <strong>Tip:</strong> If the intro is not detected correctly, try lowering the <em>Hamming threshold</em> (stricter matching) or increasing the <em>Fingerprint duration</em> so more audio is analysed.
+                        For low-quality video sources, a higher threshold (e.g. 12–16) may help.
+                    </div>
+
+                </div>
+
+                <!-- ════════════════════════════════════════════════════
+                     PAGE: MEDIA INFO
+                ════════════════════════════════════════════════════════ -->
+                <div class="help-page" id="helpPageMedia">
+
+                    <div class="help-intro-box">
+                        A <em>.strm file</em> is a plain text file that contains a single URL pointing to an online stream — commonly used for IPTV channels or remote video files.
+                        Emby adds these items to your library but cannot probe the stream for technical details at scan time.
+                        Media Info fills that gap by connecting to each stream and storing the result back in Emby.
+                    </div>
+
+                    <div class="help-section-title"><i class="md-icon">settings</i> Configure settings (first time)</div>
+                    <ol class="help-steps">
+                        <li>Click <strong>Media Info — Settings</strong> to expand the settings panel.</li>
+                        <li>Under <strong>Libraries to scan</strong>, tick every library that contains .strm files.</li>
+                        <li>Set <strong>Concurrent scans</strong> — this controls how many streams are probed at the same time. Use 1–3 to avoid being rate-limited by your IPTV provider.</li>
+                        <li>Optionally enable <strong>Auto-scan new .strm files</strong> so that newly added items are probed automatically without manual action.</li>
+                        <li>Click <span class="help-tag help-tag-green">Save settings</span>.</li>
+                    </ol>
+
+                    <hr class="help-divider">
+
+                    <div class="help-section-title"><i class="md-icon">search</i> Run a scan</div>
+                    <ol class="help-steps">
+                        <li>The <strong>stats bar</strong> at the top shows how many movies and episodes have already been scanned and how many are still missing info.</li>
+                        <li>Click <strong>Start Scan</strong> to begin. Only items with missing info are probed — already-scanned items are skipped.</li>
+                        <li>A progress bar shows how the scan is going. Click <strong>Cancel</strong> at any time to stop.</li>
+                        <li>When done, the results show each item and whether media info was successfully retrieved or not.</li>
+                        <li>Click <strong>Refresh Stats</strong> at any time to update the counts.</li>
+                    </ol>
+
+                    <div class="help-tip">
+                        <strong>Tip:</strong> A result of <em>No info</em> usually means the stream was unreachable at that moment (e.g. the IPTV server was down or the channel is geo-blocked).
+                        Simply run the scan again later to retry those items.
+                    </div>
+
+                </div>
+
+                <!-- ════════════════════════════════════════════════════
+                     PAGE: MERGE VERSION
+                ════════════════════════════════════════════════════════ -->
+                <div class="help-page" id="helpPageMerge">
+
+                    <div class="help-intro-box">
+                        Emby supports grouping multiple files of the same title as <em>alternate versions</em> — for example a 1080p copy and a 4K copy of the same movie.
+                        Normally you have to merge these manually one by one.
+                        Merge Version does it automatically across your entire library by matching items that share the same <strong>IMDb ID</strong> (movies) or <strong>TVDb ID</strong> (series).
+                    </div>
+
+                    <div class="help-section-title"><i class="md-icon">settings</i> Configure settings (first time)</div>
+                    <ol class="help-steps">
+                        <li>Click <strong>Merge Version — Settings</strong> to expand the settings panel.</li>
+                        <li>
+                            Set <strong>Movies scope</strong>:
+                            <br>• <em>Global</em> — looks for duplicates across all your movie libraries combined.
+                            <br>• <em>Per-library</em> — each library is checked independently (duplicates must be in the same library to be merged).
+                        </li>
+                        <li>
+                            Set <strong>Series scope</strong>:
+                            <br>• <em>Disabled</em> — only movies are processed.
+                            <br>• <em>Enabled</em> — also merges duplicate episodes and refreshes series that share a TVDb ID in TV libraries with auto-grouping turned on.
+                        </li>
+                        <li>Optionally enable <strong>Auto-detect new movies and episodes</strong> so a merge runs automatically 30 seconds after a new item is added.</li>
+                        <li>Click <span class="help-tag help-tag-green">Save settings</span>.</li>
+                    </ol>
+
+                    <hr class="help-divider">
+
+                    <div class="help-section-title"><i class="md-icon">merge</i> Run a merge</div>
+                    <ol class="help-steps">
+                        <li>Click <strong>Run Merge</strong>. The plugin will scan your libraries for items with matching IDs.</li>
+                        <li>A progress bar and a live table show each item as it is processed.</li>
+                        <li>When done, the results table lists every item and whether it was merged, already grouped, or failed.</li>
+                        <li>The stats bar above shows a summary: how many groups were <em>Found</em>, <em>Merged</em>, and how many <em>Failed</em>.</li>
+                    </ol>
+
+                    <div class="help-tip">
+                        <strong>Note:</strong> For a merge to succeed, both items must already have an IMDb or TVDb ID assigned in Emby.
+                        If an item shows as <em>Failed</em>, open that item in Emby, trigger a metadata refresh, and then run the merge again.
+                    </div>
+
+                </div>
+
+                <!-- ── Footer ────────────────────────────────────────── -->
+                <div style="text-align:right;margin-top:24px;padding-top:16px;border-top:1px solid #333;">
                     <button is="emby-button" type="button" id="btnCloseHelp" class="raised" style="background:#444;color:#fff;padding:0 20px;">Close</button>
                 </div>
+
             </div>
         </div>
     </div>
