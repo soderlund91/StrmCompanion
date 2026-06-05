@@ -4,14 +4,19 @@
 
 This plugin enables some functions that is missing from Emby when using .strm files. Most of the functions can also be used on regular media types. 
 
+
+# Features
 ## Media info extract
+##### For all media types
 This plugin probes movies and episodes in selected libraries to extract the media information. 
 For example: resolution, playtime, audio-codec, subtitles, etc.
 
 ## Intro dectect
+##### Specific for .strm files
 The built in Emby function to detect intros can not run on .strm files. This plugin uses the same technique as Emby (chromaprint) and some other tweaks to find the intro. 
 It then posts the intro markers to Emby database and it will work as native in Emby player.
 
 ## Auto merge
-The plugin can merge same movies across multiple libraries and folders. Emby native can only merge if they are located within the same folder. This enable you to have a folder of 4K movies and another one of 1080p.
+##### For all media types
+The plugin can merge same movies across multiple libraries and folders. Emby native only merge if they are located within the same folder. This enable you to have a folder of 4K movies and another one of 1080p.
 The plugin then finds multiple movies (or episodes) with the same IMDb or TVDb ID and merges them. 
