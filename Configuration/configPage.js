@@ -67,6 +67,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 view.querySelectorAll('.sc-main-tab-btn').forEach(function (b) {
                     b.classList.toggle('active', b === btn);
                 });
+                view.querySelector('#scMainHome').style.display  = target === 'home'  ? '' : 'none';
                 view.querySelector('#scMainIntro').style.display = target === 'intro' ? '' : 'none';
                 view.querySelector('#scMainMedia').style.display = target === 'media' ? '' : 'none';
                 view.querySelector('#scMainMerge').style.display = target === 'merge' ? '' : 'none';
@@ -79,23 +80,66 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         // ============================================================= INTRO DETECTION
 
         // ---- series / seasons ----
+        var allSeries = [];
+
         function loadSeries() {
-            var sel = view.querySelector('#selectSeries');
-            sel.innerHTML = '<option value="">- Loading series... -</option>';
+            var input = view.querySelector('#seriesSearch');
+            input.placeholder = 'Loading series...';
+            input.disabled = true;
             apiGet('strmcompanion/series')
                 .then(function (series) {
-                    sel.innerHTML = '<option value="">- Select a series -</option>';
-                    (series || []).forEach(function (s) {
-                        var opt = document.createElement('option');
-                        opt.value = s.Id;
-                        opt.textContent = s.Name;
-                        sel.appendChild(opt);
-                    });
+                    allSeries = series || [];
+                    input.placeholder = 'Type to search...';
+                    input.disabled = false;
                 })
                 .catch(function (err) {
                     console.error('StrmCompanion: series error', err);
-                    sel.innerHTML = '<option value="">Error: could not load series</option>';
+                    input.placeholder = 'Error: could not load series';
+                    input.disabled = false;
                 });
+        }
+
+        function filterSeries(query) {
+            var dropdown = view.querySelector('#seriesDropdown');
+            var q = query.trim().toLowerCase();
+            if (!q) { dropdown.style.display = 'none'; return; }
+            var matches = allSeries.filter(function (s) {
+                return s.Name.toLowerCase().indexOf(q) !== -1;
+            });
+            if (!matches.length) { dropdown.style.display = 'none'; return; }
+            dropdown.innerHTML = '';
+            matches.slice(0, 60).forEach(function (s) {
+                var item = document.createElement('div');
+                item.className = 'sc-series-item';
+                item.textContent = s.Name;
+                item.addEventListener('mousedown', function (e) {
+                    e.preventDefault();
+                    pickSeries(s.Id, s.Name);
+                });
+                dropdown.appendChild(item);
+            });
+            dropdown.style.display = 'block';
+        }
+
+        function pickSeries(id, name) {
+            view.querySelector('#selectedSeriesId').value = id;
+            view.querySelector('#selectedSeriesName').value = name;
+            view.querySelector('#seriesSearch').value = name;
+            view.querySelector('#seriesDropdown').style.display = 'none';
+            currentSeriesId = String(id);
+            loadSeasons(currentSeriesId);
+            loadMarkers(currentSeriesId, true);
+        }
+
+        function clearSeriesSelection() {
+            view.querySelector('#selectedSeriesId').value = '';
+            view.querySelector('#selectedSeriesName').value = '';
+            currentSeriesId = null;
+            hideMarkers();
+            var sel = view.querySelector('#selectSeason');
+            sel.innerHTML = '<option value="">- Select a series first -</option>';
+            sel.disabled = true;
+            view.querySelector('#btnAddToQueue').disabled = true;
         }
 
         function loadSeasons(seriesId) {
@@ -340,12 +384,11 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         }
 
         function addToQueue() {
-            var seriesSel = view.querySelector('#selectSeries');
-            var seasonSel = view.querySelector('#selectSeason');
-            var seriesId = parseInt(seriesSel.value, 10);
+            var seasonSel  = view.querySelector('#selectSeason');
+            var seriesId   = parseInt(view.querySelector('#selectedSeriesId').value, 10);
             if (!seriesId) return;
             var seasonId   = seasonSel.value ? parseInt(seasonSel.value, 10) : null;
-            var seriesName = seriesSel.options[seriesSel.selectedIndex].textContent;
+            var seriesName = view.querySelector('#selectedSeriesName').value;
             var seasonName = seasonId ? seasonSel.options[seasonSel.selectedIndex].textContent : null;
 
             var duplicate = queueItems.some(function (it) {
@@ -531,19 +574,47 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 .catch(function () { stopIntroPoll(); });
         }
 
+        function loadIntroLastRun() {
+            apiGet('strmcompanion/intro/jobs')
+                .then(function (jobs) {
+                    var introJobs = (jobs || []).filter(function (j) { return j.TaskId === 'intro-detection'; });
+
+                    var running = introJobs.find(function (j) {
+                        return j.Status === 'Running' || j.Status === 'Queued';
+                    });
+                    if (running) {
+                        introJobId = running.JobId;
+                        queueRunning = true;
+                        var syntheticItem = {
+                            seriesId:   running.SeriesInternalId,
+                            seasonId:   running.SeasonInternalId || null,
+                            seriesName: running.SeriesName || 'Unknown series',
+                            seasonName: running.SeasonName || null,
+                            status:     'running'
+                        };
+                        queueItems        = [syntheticItem];
+                        currentQueueIndex = 0;
+                        showQueueProgress(syntheticItem, 1, 1);
+                        view.querySelector('#introProgressBar').style.width = (running.ProgressPercent || 0) + '%';
+                        view.querySelector('#introStatusText').textContent  = running.CurrentActivity || 'Resuming...';
+                        startIntroPoll();
+                    }
+                })
+                .catch(function () {});
+        }
+
         // ---- intro event wiring ----
-        view.querySelector('#selectSeries').addEventListener('change', function () {
-            currentSeriesId = this.value || null;
-            if (!currentSeriesId) {
-                hideMarkers();
-                var sel = view.querySelector('#selectSeason');
-                sel.innerHTML = '<option value="">- Select a series first -</option>';
-                sel.disabled = true;
-                view.querySelector('#btnAddToQueue').disabled = true;
-                return;
-            }
-            loadSeasons(currentSeriesId);
-            loadMarkers(currentSeriesId, true);
+        view.querySelector('#seriesSearch').addEventListener('input', function () {
+            if (!this.value.trim()) { clearSeriesSelection(); }
+            filterSeries(this.value);
+        });
+        view.querySelector('#seriesSearch').addEventListener('focus', function () {
+            if (this.value.trim()) filterSeries(this.value);
+        });
+        view.querySelector('#seriesSearch').addEventListener('blur', function () {
+            setTimeout(function () {
+                view.querySelector('#seriesDropdown').style.display = 'none';
+            }, 150);
         });
 
         view.querySelector('#selectSeason').addEventListener('change', function () {
@@ -916,6 +987,8 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                     view.querySelector('#numFingerprintMinutes').value  = cfg.FingerprintDurationMinutes;
                     view.querySelector('#numMinIntroLength').value      = cfg.MinimumIntroLengthSeconds;
                     view.querySelector('#numHamming').value             = cfg.HammingDistanceThreshold;
+                    view.querySelector('#numMaxIntroLength').value      = cfg.MaximumIntroLengthSeconds != null ? cfg.MaximumIntroLengthSeconds : 300;
+                    view.querySelector('#numMinEpisodeMatch').value     = cfg.MinEpisodeMatchPercent    != null ? cfg.MinEpisodeMatchPercent    : 40;
                     view.querySelector('#txtSilenceDb').value           = cfg.SilenceThresholdDb || '';
                     view.querySelector('#chkOverwriteMarkers').checked  = !!cfg.OverwriteExistingIntroMarkers;
                     var eff = view.querySelector('#lblEffectivePath');
@@ -975,6 +1048,8 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 FingerprintDurationMinutes:     parseInt(view.querySelector('#numFingerprintMinutes').value, 10),
                 MinimumIntroLengthSeconds:      parseInt(view.querySelector('#numMinIntroLength').value, 10),
                 HammingDistanceThreshold:       parseInt(view.querySelector('#numHamming').value, 10),
+                MaximumIntroLengthSeconds:      parseInt(view.querySelector('#numMaxIntroLength').value, 10),
+                MinEpisodeMatchPercent:         parseInt(view.querySelector('#numMinEpisodeMatch').value, 10),
                 SilenceThresholdDb:             view.querySelector('#txtSilenceDb').value.trim(),
                 SilenceDurationSeconds:         0.5,
                 OverwriteExistingIntroMarkers:  view.querySelector('#chkOverwriteMarkers').checked
@@ -1346,6 +1421,8 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                         var releaseUrl = 'https://github.com/soderlund91/StrmCompanion/releases/tag/v' + ver;
                         footerVer.innerHTML = '<a href="' + releaseUrl + '" target="_blank" style="color:inherit;text-decoration:none;">v' + ver + '</a>';
                     }
+                    var homeVer = view.querySelector('#homeVersion');
+                    if (homeVer && ver) homeVer.textContent = 'v' + ver;
                     if (!ver) return;
 
                     fetch('https://api.github.com/repos/soderlund91/StrmCompanion/releases/latest')
@@ -1383,7 +1460,6 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
                 var helpOverlay = view.querySelector('#helpModalOverlay');
                 var bugOverlay  = view.querySelector('#bugReportModalOverlay');
-                var logOverlay  = view.querySelector('#logModalOverlay');
 
                 view.querySelector('#btnOpenHelp').addEventListener('click', function () { helpOverlay.classList.add('modal-visible'); });
                 view.querySelector('#btnCloseHelp').addEventListener('click', function () { helpOverlay.classList.remove('modal-visible'); });
@@ -1404,9 +1480,14 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 view.querySelector('#btnCloseBugReport').addEventListener('click', function () { bugOverlay.classList.remove('modal-visible'); });
                 bugOverlay.addEventListener('click', function (e) { if (e.target === bugOverlay) bugOverlay.classList.remove('modal-visible'); });
 
-                view.querySelector('#btnOpenLogs').addEventListener('click', function () { logOverlay.classList.add('modal-visible'); });
-                view.querySelector('#btnCloseLogs').addEventListener('click', function () { logOverlay.classList.remove('modal-visible'); });
-                logOverlay.addEventListener('click', function (e) { if (e.target === logOverlay) logOverlay.classList.remove('modal-visible'); });
+                // Home card "Open" buttons — simulate tab click
+                view.querySelector('#scMainHome').addEventListener('click', function (e) {
+                    var btn = e.target.closest('[data-sc-go]');
+                    if (!btn) return;
+                    var target = btn.getAttribute('data-sc-go');
+                    var tabBtn = view.querySelector('.sc-main-tab-btn[data-sc-main="' + target + '"]');
+                    if (tabBtn) tabBtn.click();
+                });
             }
 
             // Reset intro state
@@ -1416,7 +1497,10 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             stopIntroPoll();
             queueRunning = false;
             queueItems.forEach(function (it) { if (it.status === 'running') it.status = 'pending'; });
-            view.querySelector('#selectSeries').value = '';
+            view.querySelector('#seriesSearch').value = '';
+            view.querySelector('#selectedSeriesId').value = '';
+            view.querySelector('#selectedSeriesName').value = '';
+            view.querySelector('#seriesDropdown').style.display = 'none';
             var selSeason = view.querySelector('#selectSeason');
             selSeason.disabled = true;
             selSeason.innerHTML = '<option value="">- Select a series first -</option>';
@@ -1425,12 +1509,14 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             showQueueView();
             renderQueue();
             loadSeries();
+            loadIntroLastRun();
 
-            // Always start on Intro Detection tab
+            // Always start on Home tab
             view.querySelectorAll('.sc-main-tab-btn').forEach(function (b) {
-                b.classList.toggle('active', b.getAttribute('data-sc-main') === 'intro');
+                b.classList.toggle('active', b.getAttribute('data-sc-main') === 'home');
             });
-            view.querySelector('#scMainIntro').style.display = '';
+            view.querySelector('#scMainHome').style.display  = '';
+            view.querySelector('#scMainIntro').style.display = 'none';
             view.querySelector('#scMainMedia').style.display = 'none';
             view.querySelector('#scMainMerge').style.display = 'none';
         });

@@ -13,6 +13,15 @@ namespace StrmCompanion
         /// <summary>Minimum detected intro length in seconds to be considered valid.</summary>
         public int MinimumIntroLengthSeconds { get; set; } = 10;
 
+        /// <summary>Minimum peak alignment score (0–1) required across the fingerprint windows. Lower = more permissive. Default: 0.55.</summary>
+        public double MinAlignmentScore { get; set; } = 0.55;
+
+        /// <summary>Maximum detected intro length in seconds (0 = no limit). Default 300 (5 min).</summary>
+        public int MaximumIntroLengthSeconds { get; set; } = 300;
+
+        /// <summary>Minimum percentage of season episodes that must match before writing markers (1–100). Default 40.</summary>
+        public int MinEpisodeMatchPercent { get; set; } = 40;
+
         /// <summary>Silence threshold for silencedetect filter (e.g. "-30dB").</summary>
         public string SilenceThresholdDb { get; set; } = "-30dB";
 

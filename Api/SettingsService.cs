@@ -29,6 +29,8 @@ namespace StrmCompanion.Api
         public double SilenceDurationSeconds { get; set; }
         public string FfmpegPathOverride { get; set; }
         public bool OverwriteExistingIntroMarkers { get; set; }
+        public int MaximumIntroLengthSeconds { get; set; }
+        public int MinEpisodeMatchPercent { get; set; }
     }
 
     public class SettingsDto
@@ -42,6 +44,8 @@ namespace StrmCompanion.Api
         public double SilenceDurationSeconds { get; set; }
         public string FfmpegPathOverride { get; set; }
         public bool OverwriteExistingIntroMarkers { get; set; }
+        public int MaximumIntroLengthSeconds { get; set; }
+        public int MinEpisodeMatchPercent { get; set; }
     }
 
     public class SettingsService : BaseApiService
@@ -70,6 +74,8 @@ namespace StrmCompanion.Api
             cfg.SilenceDurationSeconds         = request.SilenceDurationSeconds > 0 ? request.SilenceDurationSeconds : 0.5;
             cfg.FfmpegPathOverride             = request.FfmpegPathOverride?.Trim() ?? string.Empty;
             cfg.OverwriteExistingIntroMarkers  = request.OverwriteExistingIntroMarkers;
+            cfg.MaximumIntroLengthSeconds      = request.MaximumIntroLengthSeconds >= 0 ? request.MaximumIntroLengthSeconds : 300;
+            cfg.MinEpisodeMatchPercent         = request.MinEpisodeMatchPercent >= 1 && request.MinEpisodeMatchPercent <= 100 ? request.MinEpisodeMatchPercent : 40;
 
             Plugin.Instance?.SaveConfiguration();
 
@@ -86,7 +92,9 @@ namespace StrmCompanion.Api
             SilenceThresholdDb            = cfg.SilenceThresholdDb,
             SilenceDurationSeconds        = cfg.SilenceDurationSeconds,
             FfmpegPathOverride            = cfg.FfmpegPathOverride,
-            OverwriteExistingIntroMarkers = cfg.OverwriteExistingIntroMarkers
+            OverwriteExistingIntroMarkers = cfg.OverwriteExistingIntroMarkers,
+            MaximumIntroLengthSeconds     = cfg.MaximumIntroLengthSeconds,
+            MinEpisodeMatchPercent        = cfg.MinEpisodeMatchPercent
         };
     }
 }

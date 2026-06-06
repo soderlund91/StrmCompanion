@@ -83,7 +83,13 @@ namespace StrmCompanion.IntroDetection
                 silenceService.SetFfmpegPath(ffmpegPath);
 
                 var fingerprintStore = new FingerprintStore(dataPath, _jsonSerializer, _logger);
-                var matcher = new FingerprintMatcher(_logger, config.HammingDistanceThreshold, config.MinimumIntroLengthSeconds);
+                var matcher = new FingerprintMatcher(
+                    _logger,
+                    config.HammingDistanceThreshold,
+                    config.MinimumIntroLengthSeconds,
+                    config.MinAlignmentScore,
+                    config.MaximumIntroLengthSeconds,
+                    config.MinEpisodeMatchPercent);
                 var markerWriter = new MarkerWriterService(_libraryManager, _itemRepository, _logger);
 
                 // Determine which seasons to process

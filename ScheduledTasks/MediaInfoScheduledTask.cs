@@ -223,28 +223,25 @@ namespace StrmCompanion.ScheduledTasks
                 var res    = (item?.Width ?? 0) > 0 ? $"{item.Width}x{item.Height}" : null;
                 var codec  = !string.IsNullOrEmpty(video.Codec) ? video.Codec.ToUpperInvariant() : null;
                 var vParts = new[] { res, codec }.Where(x => x != null);
-                parts.Add("V:" + string.Join(" ", vParts));
+                parts.Add("Video: " + string.Join(" ", vParts));
             }
 
-            foreach (var a in streams.Where(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Audio))
+            var audioStreams = streams.Where(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Audio).ToList();
+            if (audioStreams.Count > 0)
             {
+                var a        = audioStreams[0];
                 var codec    = !string.IsNullOrEmpty(a.Codec) ? a.Codec.ToUpperInvariant() : null;
                 var channels = a.Channels.HasValue ? $"{a.Channels}ch" : null;
-                var lang     = !string.IsNullOrEmpty(a.Language) ? a.Language : null;
-                var aParts   = new[] { codec, channels, lang }.Where(x => x != null);
-                parts.Add("A:" + string.Join(" ", aParts));
+                var aParts   = new[] { codec, channels }.Where(x => x != null);
+                parts.Add("Audio: " + string.Join(" ", aParts));
             }
 
             var subs = streams.Where(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Subtitle).ToList();
             if (subs.Count > 0)
             {
-                var subLabels = subs.Select(s =>
-                {
-                    var lang  = !string.IsNullOrEmpty(s.Language) ? s.Language : null;
-                    var codec = !string.IsNullOrEmpty(s.Codec) ? s.Codec : null;
-                    return lang ?? codec ?? "?";
-                });
-                parts.Add("S:" + string.Join("/", subLabels));
+                var uniqueLangs = subs.Select(s => s.Language).Where(l => !string.IsNullOrEmpty(l)).Distinct().Count();
+                var subLabel    = uniqueLangs > 0 ? $"Subtitles: {uniqueLangs} language{(uniqueLangs != 1 ? "s" : "")}" : "Subtitles";
+                parts.Add(subLabel);
             }
 
             return parts.Count > 0 ? string.Join(" | ", parts) : "No media info found";

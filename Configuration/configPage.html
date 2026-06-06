@@ -50,6 +50,40 @@
         .sc-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
         @media (max-width: 600px) { .sc-settings-grid { grid-template-columns: 1fr; } }
 
+        /* ── Series search ──────────────────────────────────────────── */
+        .sc-series-dropdown {
+            position: absolute; z-index: 999; left: 0; right: 0;
+            background: #2a2a2a; border: 1px solid #555; border-radius: 4px;
+            max-height: 220px; overflow-y: auto; margin-top: 2px; display: none;
+        }
+        .sc-series-item {
+            padding: 8px 12px; cursor: pointer; font-size: 13px; color: #ddd;
+        }
+        .sc-series-item:hover { background: rgba(0,164,220,.15); color: #00a4dc; }
+
+        /* ── Home page ───────────────────────────────────────────────── */
+        .sc-home-header { margin-bottom: 32px; }
+        .sc-home-title { font-size: 1.85em; font-weight: 700; color: #e0e0e0; margin: 0 0 5px; letter-spacing: -.01em; }
+        .sc-home-version { font-size: 13px; color: #888; }
+
+        .sc-home-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
+        @media (max-width: 700px) { .sc-home-cards { grid-template-columns: 1fr; } }
+
+        .sc-home-card {
+            background: var(--theme-background-level2, #1e1e1e);
+            border: 1px solid var(--line-color, #333);
+            border-radius: 8px; padding: 20px 20px 16px;
+            display: flex; flex-direction: column; gap: 8px;
+            transition: border-color 0.2s;
+        }
+        .sc-home-card:hover { border-color: #555; }
+        .sc-home-card-icon .md-icon { font-size: 2em; color: #00a4dc; }
+        .sc-home-card-title { font-size: 15px; font-weight: 700; color: #e0e0e0; }
+        .sc-home-card-desc { font-size: 13px; color: #999; line-height: 1.6; flex: 1; }
+        .sc-home-card-open { margin-top: 8px !important; align-self: flex-start; font-size: 13px !important; padding: 5px 18px !important; }
+
+        .sc-home-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+
         /* ── Filter buttons ─────────────────────────────────────────── */
         .sc-filter-btn {
             padding: 3px 12px; border-radius: 12px; cursor: pointer; font-size: 12px;
@@ -83,27 +117,20 @@
         .sc-library-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
         .sc-library-item input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
 
-        /* ── Header buttons ─────────────────────────────────────────── */
+        /* ── Header / Home action buttons ──────────────────────────── */
         .sc-header-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-        .btn-log-trigger, .btn-bug-trigger, .btn-help-trigger {
+        .btn-bug-trigger, .btn-help-trigger {
             background: var(--theme-background-level2, #1e1e1e) !important;
             color: var(--theme-text-primary, #ddd) !important;
-            padding: 0 12px !important; height: 32px !important;
-            border-radius: 16px !important;
+            padding: 0 16px !important; height: 36px !important;
+            border-radius: 18px !important;
             display: flex; align-items: center; gap: 6px;
-            font-size: 0.85em !important;
+            font-size: 0.88em !important;
             border: 1px solid rgba(128,128,128,0.4) !important;
             transition: border-color 0.2s;
         }
-        .btn-help-trigger {
-            background: rgba(82,181,75,0.15) !important;
-            border-color: rgba(82,181,75,0.55) !important;
-            padding: 0 18px !important; height: 40px !important;
-            border-radius: 20px !important; font-size: 0.95em !important; font-weight: 500 !important; gap: 7px !important;
-        }
-        .btn-help-trigger:hover  { background: rgba(82,181,75,0.28) !important; border-color: #52B54B !important; }
+        .btn-help-trigger:hover  { border-color: #52B54B !important; }
         .btn-bug-trigger:hover   { border-color: #e57373 !important; }
-        .btn-log-trigger:hover   { border-color: #00a4dc !important; }
 
         /* ── Modals ──────────────────────────────────────────────────── */
         .modal-backdrop {
@@ -249,28 +276,61 @@
     <div data-role="content">
         <div class="content-primary">
 
-            <!-- ── Header buttons ────────────────────────────────────── -->
+            <!-- ── Header ───────────────────────────────────────────── -->
             <div class="sc-header-bar">
                 <button type="button" is="emby-button" class="btn-help-trigger" id="btnOpenHelp" title="Help">
                     <i class="md-icon">help</i>
                     <span>Help</span>
                 </button>
-                <button type="button" is="emby-button" class="btn-bug-trigger" id="btnOpenBugReport" title="Report a bug">
-                    <i class="md-icon">bug_report</i>
-                    <span>Report bug</span>
-                </button>
-                <button type="button" is="emby-button" class="btn-log-trigger" id="btnOpenLogs" title="Logs">
-                    <i class="md-icon">terminal</i>
-                    <span>Logs</span>
-                </button>
             </div>
 
             <!-- ── Top-level tab bar ───────────────────────────────── -->
             <div class="sc-main-tab-bar">
-                <button class="sc-main-tab-btn active" data-sc-main="intro">Intro Detection</button>
+                <button class="sc-main-tab-btn active" data-sc-main="home">Home</button>
+                <button class="sc-main-tab-btn"        data-sc-main="intro">Intro Detection</button>
                 <button class="sc-main-tab-btn"        data-sc-main="media">Media Info</button>
                 <button class="sc-main-tab-btn"        data-sc-main="merge">Merge Version</button>
             </div>
+
+            <!-- ═══════════════════════════════════════════════════════
+                 TAB: HOME
+            ═══════════════════════════════════════════════════════════ -->
+            <div id="scMainHome">
+
+                <div class="sc-home-header">
+                    <div class="sc-home-title">StrmCompanion</div>
+                    <div class="sc-home-version" id="homeVersion"></div>
+                </div>
+
+                <div class="sc-home-cards">
+                    <div class="sc-home-card">
+                        <div class="sc-home-card-icon"><i class="md-icon">skip_next</i></div>
+                        <div class="sc-home-card-title">Intro Detection</div>
+                        <div class="sc-home-card-desc">Analyses episode audio to find repeated segments and adds Skip Intro markers to the Emby player.</div>
+                        <button type="button" is="emby-button" class="raised emby-button sc-home-card-open" data-sc-go="intro">Open</button>
+                    </div>
+                    <div class="sc-home-card">
+                        <div class="sc-home-card-icon"><i class="md-icon">info</i></div>
+                        <div class="sc-home-card-title">Media Info</div>
+                        <div class="sc-home-card-desc">Probes .strm stream files and writes codec, resolution and audio details back to the Emby database.</div>
+                        <button type="button" is="emby-button" class="raised emby-button sc-home-card-open" data-sc-go="media">Open</button>
+                    </div>
+                    <div class="sc-home-card">
+                        <div class="sc-home-card-icon"><i class="md-icon">merge</i></div>
+                        <div class="sc-home-card-title">Merge Version</div>
+                        <div class="sc-home-card-desc">Finds movies and episodes sharing an IMDb or TVDb ID and groups them as Emby alternate versions.</div>
+                        <button type="button" is="emby-button" class="raised emby-button sc-home-card-open" data-sc-go="merge">Open</button>
+                    </div>
+                </div>
+
+                <div class="sc-home-actions">
+                    <button type="button" is="emby-button" class="btn-bug-trigger" id="btnOpenBugReport">
+                        <i class="md-icon">bug_report</i>
+                        <span>Report bug</span>
+                    </button>
+                </div>
+
+            </div><!-- /scMainHome -->
 
             <!-- ═══════════════════════════════════════════════════════
                  TAB: INTRO DETECTION
@@ -319,6 +379,16 @@
                                     <label class="inputLabel inputLabelUnfocused" for="numHamming">Hamming threshold (1–32)</label>
                                     <input id="numHamming" is="emby-input" type="number" class="emby-input" min="1" max="32" />
                                     <p class="sc-info">Tolerance for matching. Lower = stricter. Default 8, try to increase for low quality videos.</p>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="numMaxIntroLength">Maximum intro length (seconds)</label>
+                                    <input id="numMaxIntroLength" is="emby-input" type="number" class="emby-input" min="0" max="600" />
+                                    <p class="sc-info">Longest allowed detected intro. 0 = no limit. Default 300 (5 minutes).</p>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="numMinEpisodeMatch">Min. episodes matched (%)</label>
+                                    <input id="numMinEpisodeMatch" is="emby-input" type="number" class="emby-input" min="1" max="100" />
+                                    <p class="sc-info">Percentage of episodes that must match to write markers. Lower = more permissive. Default 40.</p>
                                 </div>
                                 <div class="inputContainer">
                                     <label class="inputLabel inputLabelUnfocused" for="txtSilenceDb">Silence threshold</label>
@@ -386,11 +456,12 @@
                         <h2 class="sectionTitle">Select what to analyse</h2>
                     </div>
                     <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
-                        <div class="inputContainer" style="flex:1;min-width:180px;">
-                            <label class="inputLabel inputLabelUnfocused" for="selectSeries">Series</label>
-                            <select id="selectSeries" is="emby-select" class="emby-select-withcolor emby-select">
-                                <option value="">- Loading series... -</option>
-                            </select>
+                        <div class="inputContainer" style="flex:1;min-width:180px;position:relative;">
+                            <label class="inputLabel inputLabelUnfocused" for="seriesSearch">Series</label>
+                            <input id="seriesSearch" is="emby-input" type="text" class="emby-input" placeholder="Type to search..." autocomplete="off" />
+                            <input type="hidden" id="selectedSeriesId" value="" />
+                            <input type="hidden" id="selectedSeriesName" value="" />
+                            <div id="seriesDropdown" class="sc-series-dropdown"></div>
                         </div>
                         <div class="inputContainer" style="flex:1;min-width:180px;">
                             <label class="inputLabel inputLabelUnfocused" for="selectSeason">Season</label>
@@ -985,25 +1056,6 @@
                 <div style="text-align:right;margin-top:20px;">
                     <button is="emby-button" type="button" id="btnCloseBugReport" class="raised" style="background:#444;color:#fff;padding:0 20px;">Close</button>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Logs modal ───────────────────────────────────────────────── -->
-    <div id="logModalOverlay" class="modal-backdrop">
-        <div class="modal-content" style="max-width:750px;width:95%;">
-            <div class="modal-header-bar" style="background:#222;">
-                <i class="md-icon modal-header-icon" style="color:#00a4dc;">terminal</i>
-                <div>
-                    <h2 class="modal-header-title">Logs</h2>
-                    <span style="opacity:0.7;font-size:0.85em;">StrmCompanion activity log</span>
-                </div>
-            </div>
-            <div class="modal-body-scroll" style="background:#0a0a0a;color:#ececec;font-family:'Consolas','Monaco',monospace;font-size:0.85em;white-space:pre-wrap;padding:20px;border-top:1px solid #333;">
-                Coming soon.
-            </div>
-            <div style="text-align:right;padding:15px;background:#1a1a1a;border-top:1px solid #333;">
-                <button is="emby-button" type="button" id="btnCloseLogs" class="raised" style="background:#444;color:#fff;padding:0 20px;">Close</button>
             </div>
         </div>
     </div>

@@ -10,21 +10,27 @@ namespace StrmCompanion.IntroDetection
         private readonly ILogger _logger;
         private readonly int _hammingThreshold;
         private readonly int _minimumIntroSeconds;
-
-        // Minimum fraction of episodes that must match before we trust the consensus.
-        private const double MinEpisodeMatchFraction = 0.40; // at least 40 %
-
-        // Minimum alignment-score at the best offset (0–1). Below this → reject.
-        private const double MinAlignmentScore = 0.55;
+        private readonly double _minAlignmentScore;
+        private readonly int _maximumIntroSeconds;
+        private readonly double _minEpisodeMatchFraction;
 
         // A detected start more than this many seconds from the median is an outlier.
         private const double MaxStartDeviation = 45.0;
 
-        public FingerprintMatcher(ILogger logger, int hammingThreshold = 8, int minimumIntroSeconds = 10)
+        public FingerprintMatcher(
+            ILogger logger,
+            int hammingThreshold = 8,
+            int minimumIntroSeconds = 10,
+            double minAlignmentScore = 0.55,
+            int maximumIntroSeconds = 300,
+            int minEpisodeMatchPercent = 40)
         {
             _logger = logger;
             _hammingThreshold = hammingThreshold;
             _minimumIntroSeconds = minimumIntroSeconds;
+            _minAlignmentScore = minAlignmentScore;
+            _maximumIntroSeconds = maximumIntroSeconds;
+            _minEpisodeMatchFraction = minEpisodeMatchPercent / 100.0;
         }
 
         private class EpisodeMatch
@@ -37,26 +43,30 @@ namespace StrmCompanion.IntroDetection
             public double AlignmentScore { get; set; }
         }
 
+        private class ConsensusResult
+        {
+            public FingerprintData Reference        { get; set; }
+            public List<EpisodeMatch> Matches       { get; set; }
+            public List<FingerprintData> Unmatched  { get; set; }
+            public double ConsensusLength           { get; set; }
+            public double RefConsensusStart         { get; set; }
+        }
+
         /// <summary>
-        /// Finds the common intro for each episode.
+        /// Finds the common intro for each episode using a multi-reference strategy.
         ///
-        /// Validation pipeline (any failed step → episode is rejected or whole season fails):
+        /// Validation pipeline per reference candidate:
         ///   1. Alignment quality: best-offset score must exceed MinAlignmentScore.
         ///   2. Run length: contiguous (gap-tolerant) match must span ≥ MinimumIntroLength.
         ///   3. Start consistency: detected start must be within MaxStartDeviation of the
-        ///      median start (outlier rejection – catches wrong-position matches like ep.10).
-        ///   4. Quorum: at least MinEpisodeMatchFraction of episodes must contribute to
-        ///      the consensus before any timestamps are written.
-        ///   5. Consensus length used as end: start + consensusLength per episode.
-        ///      The per-episode end from fingerprinting is unreliable; the length is stable.
-        ///   6. Retry: episodes that failed steps 1-2 are retried with a relaxed threshold
-        ///      but ONLY accepted if their start is within MaxStartDeviation of the
-        ///      consensus start estimate.
+        ///      median start (outlier rejection).
+        ///   4. Quorum: at least MinEpisodeMatchFraction of episodes must contribute.
+        ///   5. Consensus length clamped to MaximumIntroLengthSeconds.
+        ///   6. Retry: unmatched episodes retried with relaxed threshold near consensus start.
         /// </summary>
         public Dictionary<long, IntroTimestamps> FindConsensusIntros(List<FingerprintData> episodes)
         {
-            var result   = new Dictionary<long, IntroTimestamps>();
-            var unmatched = new List<FingerprintData>();
+            var result = new Dictionary<long, IntroTimestamps>();
 
             if (episodes.Count < 2)
             {
@@ -64,113 +74,88 @@ namespace StrmCompanion.IntroDetection
                 return result;
             }
 
-            var reference = episodes[0];
-            double sps = reference.SamplesPerSecond > 0 ? reference.SamplesPerSecond : 8.06;
+            // ── Multi-reference: try up to 3 candidate reference episodes ──────────
+            // Picks whichever candidate yields the most matched episodes.
+            int candidateCount = Math.Min(3, episodes.Count);
+            ConsensusResult best = null;
 
-            // ── Phase 1: compare reference vs each other episode ──────────────
-            var matches = new List<EpisodeMatch>();
-
-            for (int i = 1; i < episodes.Count; i++)
+            for (int refIdx = 0; refIdx < candidateCount; refIdx++)
             {
-                var ep = episodes[i];
-                var m  = TryMatch(reference, ep, sps, _hammingThreshold);
+                _logger.Info("StrmCompanion: trying reference [{0}] '{1}'",
+                    refIdx, episodes[refIdx].EpisodeName);
 
-                if (m == null)
-                {
-                    _logger.Debug("StrmCompanion: '{0}' – no match (score too low or run too short)",
-                        ep.EpisodeName);
-                    unmatched.Add(ep);
-                }
-                else
-                {
-                    _logger.Debug(
-                        "StrmCompanion: '{0}' start={1:F1}s len={2:F1}s score={3:P0}",
-                        ep.EpisodeName, m.EpisodeStart, m.DetectedLength, m.AlignmentScore);
-                    matches.Add(m);
-                }
+                var candidate = TryGetConsensus(episodes, refIdx);
+                if (candidate == null) continue;
+
+                if (best == null || candidate.Matches.Count > best.Matches.Count)
+                    best = candidate;
+
+                // Early exit: every non-reference episode already matched
+                if (best.Matches.Count == episodes.Count - 1) break;
             }
 
-            // ── Phase 2: outlier rejection on episode starts ──────────────────
-            // TV intros begin at roughly the same time in every episode.
-            // A wildly different start means we found the wrong segment.
-            matches = RejectOutliers(matches);
-
-            // ── Phase 3: quorum check ─────────────────────────────────────────
-            int minRequired = Math.Max(2, (int)Math.Ceiling((episodes.Count - 1) * MinEpisodeMatchFraction));
-            if (matches.Count < minRequired)
+            if (best == null)
             {
-                _logger.Info(
-                    "StrmCompanion: only {0}/{1} episode(s) matched (need {2}). " +
-                    "Not writing any markers – confidence too low.",
-                    matches.Count, episodes.Count - 1, minRequired);
+                _logger.Info("StrmCompanion: no reference candidate produced a quorum. Not writing any markers.");
                 return result;
             }
 
-            // ── Phase 4: consensus ────────────────────────────────────────────
-            double consensusLength   = Median(matches.Select(m => m.DetectedLength).ToList());
-            double refConsensusStart = Median(matches.Select(m => m.ReferenceStart).ToList());
+            var reference    = best.Reference;
+            double sps       = reference.SamplesPerSecond > 0 ? reference.SamplesPerSecond : 8.06;
+            double consensusLen = best.ConsensusLength;
+            double refStart     = best.RefConsensusStart;
 
             _logger.Info(
-                "StrmCompanion: consensus length={0:F1}s  ref-start={1:F1}s  ({2}/{3} episodes)",
-                consensusLength, refConsensusStart, matches.Count, episodes.Count - 1);
+                "StrmCompanion: best reference '{0}' — consensus length={1:F1}s  ref-start={2:F1}s  ({3}/{4} episodes matched)",
+                reference.EpisodeName, consensusLen, refStart, best.Matches.Count, episodes.Count - 1);
 
-            // Reference episode
+            // Reference episode timestamps
             result[reference.EpisodeInternalId] = new IntroTimestamps
             {
-                StartSeconds = refConsensusStart,
-                EndSeconds   = refConsensusStart + consensusLength
+                StartSeconds = refStart,
+                EndSeconds   = refStart + consensusLen
             };
 
-            // Matched episodes
-            foreach (var m in matches)
+            // Matched episode timestamps
+            foreach (var m in best.Matches)
             {
                 result[m.EpisodeId] = new IntroTimestamps
                 {
                     StartSeconds = m.EpisodeStart,
-                    EndSeconds   = m.EpisodeStart + consensusLength
+                    EndSeconds   = m.EpisodeStart + consensusLen
                 };
             }
 
-            // ── Phase 5: retry unmatched episodes ─────────────────────────────
-            // We now know roughly where the intro should be. Use that as a prior
-            // and retry with a relaxed threshold, accepting ONLY if the found start
-            // is consistent with the consensus.
-            if (unmatched.Count > 0)
+            // ── Phase 5: retry unmatched episodes ─────────────────────────────────
+            if (best.Unmatched.Count > 0)
             {
                 int relaxedThreshold = Math.Min(_hammingThreshold + 6, 20);
                 _logger.Info("StrmCompanion: retrying {0} unmatched episode(s) (threshold={1})",
-                    unmatched.Count, relaxedThreshold);
+                    best.Unmatched.Count, relaxedThreshold);
 
-                foreach (var ep in unmatched)
+                foreach (var ep in best.Unmatched)
                 {
-                    var m = TryMatchNear(reference, ep, sps, relaxedThreshold, refConsensusStart);
+                    var m = TryMatchNear(reference, ep, sps, relaxedThreshold, refStart);
                     if (m == null)
                     {
                         _logger.Info("StrmCompanion: '{0}' – no match even after retry", ep.EpisodeName);
                         continue;
                     }
 
-                    // Validate start consistency against consensus
-                    // (use the expected episode-start by assuming same offset as consensus reference start)
-                    double expectedEpStart = m.EpisodeStart; // we only have the reference to compare
-                    // Instead, verify ref-start is consistent with the consensus ref-start
-                    if (Math.Abs(m.ReferenceStart - refConsensusStart) > MaxStartDeviation)
+                    if (Math.Abs(m.ReferenceStart - refStart) > MaxStartDeviation)
                     {
                         _logger.Info(
-                            "StrmCompanion: '{0}' retry result rejected – ref start {1:F1}s is {2:F1}s " +
-                            "from consensus {3:F1}s (outlier)",
+                            "StrmCompanion: '{0}' retry result rejected – ref start {1:F1}s is {2:F1}s from consensus {3:F1}s (outlier)",
                             ep.EpisodeName, m.ReferenceStart,
-                            Math.Abs(m.ReferenceStart - refConsensusStart), refConsensusStart);
+                            Math.Abs(m.ReferenceStart - refStart), refStart);
                         continue;
                     }
 
-                    _logger.Info("StrmCompanion: '{0}' retry succeeded – start={1:F1}s",
-                        ep.EpisodeName, m.EpisodeStart);
-
+                    _logger.Info("StrmCompanion: '{0}' retry succeeded – start={1:F1}s", ep.EpisodeName, m.EpisodeStart);
                     result[ep.EpisodeInternalId] = new IntroTimestamps
                     {
                         StartSeconds = m.EpisodeStart,
-                        EndSeconds   = m.EpisodeStart + consensusLength
+                        EndSeconds   = m.EpisodeStart + consensusLen
                     };
                 }
             }
@@ -178,7 +163,78 @@ namespace StrmCompanion.IntroDetection
             return result;
         }
 
-        // ── Helpers ──────────────────────────────────────────────────────────
+        // ── Phases 1–4 for a given reference index ────────────────────────────────
+
+        private ConsensusResult TryGetConsensus(List<FingerprintData> episodes, int refIdx)
+        {
+            var reference = episodes[refIdx];
+            double sps = reference.SamplesPerSecond > 0 ? reference.SamplesPerSecond : 8.06;
+
+            var matches   = new List<EpisodeMatch>();
+            var unmatched = new List<FingerprintData>();
+
+            // Phase 1: compare reference vs every other episode
+            for (int i = 0; i < episodes.Count; i++)
+            {
+                if (i == refIdx) continue;
+
+                var ep = episodes[i];
+                var m  = TryMatch(reference, ep, sps, _hammingThreshold);
+
+                if (m == null)
+                {
+                    _logger.Debug("StrmCompanion: '{0}' – no match against ref '{1}' (score too low or run too short)",
+                        ep.EpisodeName, reference.EpisodeName);
+                    unmatched.Add(ep);
+                }
+                else
+                {
+                    _logger.Debug(
+                        "StrmCompanion: '{0}' start={1:F1}s len={2:F1}s score={3:P0} (ref '{4}')",
+                        ep.EpisodeName, m.EpisodeStart, m.DetectedLength, m.AlignmentScore, reference.EpisodeName);
+                    matches.Add(m);
+                }
+            }
+
+            // Phase 2: outlier rejection on episode starts
+            matches = RejectOutliers(matches);
+
+            // Phase 3: quorum check
+            // Bug fix: Math.Max(1,...) so 2-episode seasons can pass (previously Math.Max(2,...) made it impossible).
+            int nonRef      = episodes.Count - 1;
+            int minRequired = Math.Max(1, (int)Math.Ceiling(nonRef * _minEpisodeMatchFraction));
+            if (matches.Count < minRequired)
+            {
+                _logger.Info(
+                    "StrmCompanion: ref='{0}' only {1}/{2} episode(s) matched (need {3}). Quorum not met.",
+                    reference.EpisodeName, matches.Count, nonRef, minRequired);
+                return null;
+            }
+
+            // Phase 4: consensus
+            double consensusLength   = Median(matches.Select(m => m.DetectedLength).ToList());
+            double refConsensusStart = Median(matches.Select(m => m.ReferenceStart).ToList());
+
+            // Clamp to MaximumIntroLengthSeconds (0 = no limit)
+            if (_maximumIntroSeconds > 0 && consensusLength > _maximumIntroSeconds)
+            {
+                _logger.Info(
+                    "StrmCompanion: clamping consensus length {0:F1}s → {1}s (MaximumIntroLengthSeconds)",
+                    consensusLength, _maximumIntroSeconds);
+                consensusLength = _maximumIntroSeconds;
+            }
+
+            return new ConsensusResult
+            {
+                Reference         = reference,
+                Matches           = matches,
+                Unmatched         = unmatched,
+                ConsensusLength   = consensusLength,
+                RefConsensusStart = refConsensusStart
+            };
+        }
+
+        // ── Helpers ──────────────────────────────────────────────────────────────
 
         /// <summary>Full comparison: alignment score check + run detection.</summary>
         private EpisodeMatch TryMatch(
@@ -190,13 +246,14 @@ namespace StrmCompanion.IntroDetection
             int minSamples = (int)(_minimumIntroSeconds * sps);
             if (a.Count < minSamples || b.Count < minSamples) return null;
 
-            int windowSize   = minSamples * 2;
-            int bestOffset   = FindBestOffset(a, b, windowSize, out double bestScore);
+            // Use minSamples as window (not 2×) for better sensitivity on short intros.
+            int windowSize = minSamples;
+            int bestOffset = FindBestOffset(a, b, windowSize, out double bestScore);
 
-            if (bestScore < MinAlignmentScore)
+            if (bestScore < _minAlignmentScore)
             {
-                _logger.Debug("StrmCompanion: '{0}' alignment score {1:P0} < {2:P0} – rejected",
-                    other.EpisodeName, bestScore, MinAlignmentScore);
+                _logger.Info("StrmCompanion: '{0}' best alignment score {1:P0} < {2:P0} – no matching window found",
+                    other.EpisodeName, bestScore, _minAlignmentScore);
                 return null;
             }
 
@@ -245,18 +302,24 @@ namespace StrmCompanion.IntroDetection
             int lo = Math.Max(-(b.Count - windowSize), center - searchRadius);
             int hi = Math.Min(a.Count - windowSize,   center + searchRadius);
 
+            int scanStride = Math.Max(1, windowSize / 2);
+
             for (int offset = lo; offset <= hi; offset++)
             {
                 int aS = Math.Max(0, offset);
                 int bS = Math.Max(0, -offset);
                 int av = Math.Min(a.Count - aS, b.Count - bS);
                 if (av < windowSize) continue;
-                double s = SimilarityScore(a, b, aS, bS, windowSize);
-                if (s > bestScore) { bestScore = s; bestOffset = offset; }
+
+                for (int scan = 0; scan + windowSize <= av; scan += scanStride)
+                {
+                    double s = SimilarityScore(a, b, aS + scan, bS + scan, windowSize);
+                    if (s > bestScore) { bestScore = s; bestOffset = offset; }
+                }
             }
 
             // Relax the score threshold slightly for retries
-            if (bestScore < MinAlignmentScore - 0.10) return null;
+            if (bestScore < _minAlignmentScore - 0.10) return null;
 
             int aStart     = Math.Max(0, bestOffset);
             int bStart     = Math.Max(0, -bestOffset);
@@ -300,7 +363,7 @@ namespace StrmCompanion.IntroDetection
             return accepted;
         }
 
-        // ── Gap-tolerant run detection ────────────────────────────────────────
+        // ── Gap-tolerant run detection ────────────────────────────────────────────
 
         private (int start, int length)? FindBestRun(
             List<uint> a, List<uint> b,
@@ -334,7 +397,7 @@ namespace StrmCompanion.IntroDetection
             return bestStart >= 0 ? (bestStart, bestLen) : ((int, int)?)null;
         }
 
-        // ── Offset search ─────────────────────────────────────────────────────
+        // ── Offset search ─────────────────────────────────────────────────────────
 
         private int FindBestOffset(List<uint> a, List<uint> b, int windowSize, out double bestScore)
         {
@@ -343,14 +406,22 @@ namespace StrmCompanion.IntroDetection
             int maxSlide = Math.Max(a.Count, b.Count) - windowSize;
             if (maxSlide < 0) maxSlide = 0;
 
+            // Stride of windowSize/2 ensures every point is covered by at least one window,
+            // allowing intros that don't start at t=0 (e.g. after a cold open) to be found.
+            int scanStride = Math.Max(1, windowSize / 2);
+
             for (int offset = -maxSlide; offset <= maxSlide; offset++)
             {
                 int aS = Math.Max(0, offset);
                 int bS = Math.Max(0, -offset);
                 int av = Math.Min(a.Count - aS, b.Count - bS);
                 if (av < windowSize) continue;
-                double s = SimilarityScore(a, b, aS, bS, windowSize);
-                if (s > bestScore) { bestScore = s; bestOffset = offset; }
+
+                for (int scan = 0; scan + windowSize <= av; scan += scanStride)
+                {
+                    double s = SimilarityScore(a, b, aS + scan, bS + scan, windowSize);
+                    if (s > bestScore) { bestScore = s; bestOffset = offset; }
+                }
             }
             return bestOffset;
         }
