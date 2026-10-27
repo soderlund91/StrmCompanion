@@ -27,6 +27,5 @@ The intro detect also can list all existing intro markers even if they are not f
 
 
 > [!NOTE]
-> Check each release for required server version.
-The intro detection is work in progress. It currently works really good on some shows, and not as good on others. The process is pretty slow (I have prioritized quality over speed) but when the fingerprinting is done you can change the settings and play around with them and it will be a lot quicker. The fingerprinting is the slow process and unaffected by the user settings. 
+> The intro detection is work in progress. It currently works really good on some shows, and not as good on others. The process is pretty slow (I have prioritized quality over speed) but when the fingerprinting is done you can change the settings and play around with them and it will be a lot quicker. The fingerprinting is the slow process and unaffected by the user settings. 
 So do the fingerprinting and then test with other settings.
