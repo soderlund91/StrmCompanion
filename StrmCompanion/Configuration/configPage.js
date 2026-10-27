@@ -52,6 +52,11 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         var mergeJobId       = null;
         var mergePoll        = null;
         var mergeLiveRendered = {};
+        var splitJobId       = null;
+        var splitPoll        = null;
+        var splitLiveRendered = {};
+        var allMovies        = [];
+        var moviesLoaded     = false;
 
         // Queue state
         var queueItems        = [];   // { seriesId, seasonId, seriesName, seasonName, status }
@@ -99,33 +104,70 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 });
         }
 
-        function filterSeries(query) {
-            var dropdown = view.querySelector('#seriesDropdown');
-            var q = query.trim().toLowerCase();
-            if (!q) { dropdown.style.display = 'none'; return; }
-            var matches = allSeries.filter(function (s) {
-                return s.Name.toLowerCase().indexOf(q) !== -1;
-            });
-            if (!matches.length) { dropdown.style.display = 'none'; return; }
-            dropdown.innerHTML = '';
-            matches.slice(0, 60).forEach(function (s) {
-                var item = document.createElement('div');
-                item.className = 'sc-series-item';
-                item.textContent = s.Name;
-                item.addEventListener('mousedown', function (e) {
-                    e.preventDefault();
-                    pickSeries(s.Id, s.Name);
+        // ---- movies (loaded on demand, only when the split picker needs them) ----
+        function loadMovies() {
+            if (moviesLoaded) return;
+            moviesLoaded = true;
+            var input = view.querySelector('#splitMovieSearch');
+            input.placeholder = 'Loading movies...';
+            input.disabled = true;
+            apiGet('strmcompanion/movies')
+                .then(function (movies) {
+                    allMovies = movies || [];
+                    input.placeholder = 'Type to search...';
+                    input.disabled = false;
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion: movies error', err);
+                    moviesLoaded = false;
+                    input.placeholder = 'Error: could not load movies';
+                    input.disabled = false;
                 });
-                dropdown.appendChild(item);
+        }
+
+        // Wires a type-ahead input to a dropdown of { Id, Name } items.
+        function wireAutocomplete(inputSel, dropdownSel, getItems, onPick, onClear) {
+            var input = view.querySelector(inputSel);
+            var dropdown = view.querySelector(dropdownSel);
+
+            function filter() {
+                var q = input.value.trim().toLowerCase();
+                if (!q) { dropdown.style.display = 'none'; return; }
+                var matches = getItems().filter(function (it) {
+                    return it.Name.toLowerCase().indexOf(q) !== -1;
+                });
+                if (!matches.length) { dropdown.style.display = 'none'; return; }
+                dropdown.innerHTML = '';
+                matches.slice(0, 60).forEach(function (it) {
+                    var item = document.createElement('div');
+                    item.className = 'sc-series-item';
+                    item.textContent = it.Name;
+                    item.addEventListener('mousedown', function (e) {
+                        e.preventDefault();
+                        input.value = it.Name;
+                        dropdown.style.display = 'none';
+                        onPick(it.Id, it.Name);
+                    });
+                    dropdown.appendChild(item);
+                });
+                dropdown.style.display = 'block';
+            }
+
+            input.addEventListener('input', function () {
+                if (!input.value.trim()) onClear();
+                filter();
             });
-            dropdown.style.display = 'block';
+            input.addEventListener('focus', function () {
+                if (input.value.trim()) filter();
+            });
+            input.addEventListener('blur', function () {
+                setTimeout(function () { dropdown.style.display = 'none'; }, 150);
+            });
         }
 
         function pickSeries(id, name) {
             view.querySelector('#selectedSeriesId').value = id;
             view.querySelector('#selectedSeriesName').value = name;
-            view.querySelector('#seriesSearch').value = name;
-            view.querySelector('#seriesDropdown').style.display = 'none';
             currentSeriesId = String(id);
             loadSeasons(currentSeriesId);
             loadMarkers(currentSeriesId, true);
@@ -604,18 +646,8 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         }
 
         // ---- intro event wiring ----
-        view.querySelector('#seriesSearch').addEventListener('input', function () {
-            if (!this.value.trim()) { clearSeriesSelection(); }
-            filterSeries(this.value);
-        });
-        view.querySelector('#seriesSearch').addEventListener('focus', function () {
-            if (this.value.trim()) filterSeries(this.value);
-        });
-        view.querySelector('#seriesSearch').addEventListener('blur', function () {
-            setTimeout(function () {
-                view.querySelector('#seriesDropdown').style.display = 'none';
-            }, 150);
-        });
+        wireAutocomplete('#seriesSearch', '#seriesDropdown',
+            function () { return allSeries; }, pickSeries, clearSeriesSelection);
 
         view.querySelector('#selectSeason').addEventListener('change', function () {
             if (this.value) {
@@ -1363,6 +1395,227 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         view.querySelector('#btnMergeReset').addEventListener('click', showMergeControls);
 
+        // ============================================================= SPLIT VERSION
+
+        function pickSplitSeries(id, name) {
+            view.querySelector('#selectedSplitSeriesId').value = id;
+            view.querySelector('#selectedSplitSeriesName').value = name;
+            loadSplitSeasons(id);
+            view.querySelector('#btnRunSplit').disabled = false;
+        }
+
+        function clearSplitSeriesSelection() {
+            view.querySelector('#selectedSplitSeriesId').value = '';
+            view.querySelector('#selectedSplitSeriesName').value = '';
+            var sel = view.querySelector('#selectSplitSeason');
+            sel.innerHTML = '<option value="">- Select a series first -</option>';
+            sel.disabled = true;
+            view.querySelector('#btnRunSplit').disabled = true;
+        }
+
+        function loadSplitSeasons(seriesId) {
+            var selSeason = view.querySelector('#selectSplitSeason');
+            selSeason.disabled = true;
+            selSeason.innerHTML = '<option value="">- Loading seasons... -</option>';
+
+            apiGet('strmcompanion/series/' + seriesId + '/seasons')
+                .then(function (seasons) {
+                    selSeason.innerHTML = '<option value="">All seasons</option>';
+                    (seasons || []).forEach(function (s) {
+                        var opt = document.createElement('option');
+                        opt.value = s.Id;
+                        opt.textContent = s.Name;
+                        selSeason.appendChild(opt);
+                    });
+                    selSeason.disabled = false;
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion: split seasons error', err);
+                    selSeason.innerHTML = '<option value="">Error loading seasons</option>';
+                });
+        }
+
+        function pickSplitMovie(id, name) {
+            view.querySelector('#selectedSplitMovieId').value = id;
+            view.querySelector('#selectedSplitMovieName').value = name;
+            view.querySelector('#btnRunSplit').disabled = false;
+        }
+
+        function clearSplitMovieSelection() {
+            view.querySelector('#selectedSplitMovieId').value = '';
+            view.querySelector('#selectedSplitMovieName').value = '';
+            view.querySelector('#btnRunSplit').disabled = true;
+        }
+
+        function startSplit() {
+            var isMovie = view.querySelector('#selectSplitType').value === 'movie';
+            var endpoint, body;
+
+            if (isMovie) {
+                var movieId = view.querySelector('#selectedSplitMovieId').value;
+                if (!movieId) return;
+                endpoint = 'strmcompanion/splitversion/runmovie';
+                body = { MovieId: parseInt(movieId, 10) };
+            } else {
+                var seriesId = view.querySelector('#selectedSplitSeriesId').value;
+                if (!seriesId) return;
+                var seasonId = view.querySelector('#selectSplitSeason').value;
+                endpoint = 'strmcompanion/splitversion/run';
+                body = {
+                    SeriesId: parseInt(seriesId, 10),
+                    SeasonId: seasonId ? parseInt(seasonId, 10) : null
+                };
+            }
+
+            splitLiveRendered = {};
+            view.querySelector('#splitScanLiveRows').innerHTML        = '';
+            view.querySelector('#splitScanLiveWrap').style.display    = 'none';
+            view.querySelector('#splitControls').style.display        = 'none';
+            view.querySelector('#splitProgressSection').style.display = '';
+            view.querySelector('#splitResultsSection').style.display  = 'none';
+            view.querySelector('#splitStatusText').textContent        = 'Starting...';
+            view.querySelector('#splitProgressBar').style.width       = '0%';
+
+            apiPost(endpoint, body)
+                .then(function (resp) {
+                    splitJobId = resp.JobId;
+                    startSplitPoll();
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion SplitVersion: start error', err);
+                    showSplitControls();
+                });
+        }
+
+        function startSplitPoll() {
+            stopSplitPoll();
+            splitPoll = setInterval(pollSplitJob, 2000);
+        }
+
+        function stopSplitPoll() {
+            if (splitPoll) { clearInterval(splitPoll); splitPoll = null; }
+        }
+
+        function updateSplitLiveTable(job) {
+            var results = job.EpisodeResults || {};
+            var titles  = job.ItemTitles    || {};
+            var tbody   = view.querySelector('#splitScanLiveRows');
+            var wrap    = view.querySelector('#splitScanLiveWrap');
+            var added   = false;
+
+            Object.keys(results).forEach(function (id) {
+                if (splitLiveRendered[id]) return;
+                splitLiveRendered[id] = true;
+                added = true;
+                var msg   = results[id] || '';
+                var title = titles[id]  || id;
+                var isErr = msg.toLowerCase().indexOf('error') === 0;
+                var badgeCls = isErr ? 'sc-badge-err' : 'sc-badge-green';
+                var tr = document.createElement('tr');
+                tr.innerHTML =
+                    '<td>' + escapeHtml(title) + '</td>' +
+                    '<td><span class="' + badgeCls + '">' + escapeHtml(msg) + '</span></td>';
+                tbody.appendChild(tr);
+            });
+
+            if (added) {
+                wrap.style.display = '';
+                wrap.querySelector('div').scrollTop = wrap.querySelector('div').scrollHeight;
+            }
+        }
+
+        function pollSplitJob() {
+            if (!splitJobId) return;
+            apiGet('strmcompanion/splitversion/job/' + splitJobId)
+                .then(function (job) {
+                    view.querySelector('#splitProgressBar').style.width = (job.ProgressPercent || 0) + '%';
+                    view.querySelector('#splitStatusText').textContent   = job.CurrentActivity || '';
+                    updateSplitLiveTable(job);
+                    if (job.Status === 'Completed' || job.Status === 'Failed' || job.Status === 'Cancelled') {
+                        stopSplitPoll();
+                        showSplitResults(job);
+                    }
+                })
+                .catch(function () { stopSplitPoll(); showSplitControls(); });
+        }
+
+        function showSplitResults(job) {
+            view.querySelector('#splitProgressSection').style.display = 'none';
+            view.querySelector('#splitResultsSection').style.display  = '';
+
+            var titleEl   = view.querySelector('#splitResultTitle');
+            var summaryEl = view.querySelector('#splitResultSummary');
+            var tbody     = view.querySelector('#splitResultRows');
+            var results   = job.EpisodeResults || {};
+            var keys      = Object.keys(results);
+            var split     = keys.filter(function (k) { return (results[k] || '').indexOf('Split') === 0; }).length;
+            var failed    = keys.filter(function (k) { return (results[k] || '').toLowerCase().indexOf('error') === 0; }).length;
+
+            if (job.Status === 'Completed') {
+                titleEl.textContent   = 'Split complete';
+                titleEl.style.color   = '#52B54B';
+                if (keys.length === 0) {
+                    summaryEl.textContent = 'No alternate versions found — nothing to split.';
+                } else {
+                    summaryEl.textContent = split + ' item(s) split' + (failed > 0 ? ', ' + failed + ' failed.' : '.');
+                }
+            } else if (job.Status === 'Cancelled') {
+                titleEl.textContent   = 'Split cancelled';
+                titleEl.style.color   = '#aaa';
+                summaryEl.textContent = split > 0 ? split + ' item(s) split before cancel.' : 'Cancelled before any splits.';
+            } else {
+                titleEl.textContent   = 'Split failed';
+                titleEl.style.color   = '#cc0000';
+                summaryEl.textContent = job.ErrorMessage || 'An error occurred.';
+            }
+
+            var titles = job.ItemTitles || {};
+            tbody.innerHTML = '';
+            keys.forEach(function (id) {
+                var msg     = results[id] || '';
+                var isError = msg.toLowerCase().indexOf('error') === 0;
+                var title   = titles[id] || id;
+                var tr = document.createElement('tr');
+                tr.innerHTML =
+                    '<td>' + escapeHtml(title) + '</td>' +
+                    '<td><span class="' + (isError ? 'sc-badge-err' : 'sc-badge-green') + '">' + escapeHtml(msg) + '</span></td>';
+                tbody.appendChild(tr);
+            });
+        }
+
+        function showSplitControls() {
+            view.querySelector('#splitControls').style.display        = '';
+            view.querySelector('#splitProgressSection').style.display = 'none';
+            view.querySelector('#splitResultsSection').style.display  = 'none';
+            splitJobId = null;
+        }
+
+        wireAutocomplete('#splitSeriesSearch', '#splitSeriesDropdown',
+            function () { return allSeries; }, pickSplitSeries, clearSplitSeriesSelection);
+
+        wireAutocomplete('#splitMovieSearch', '#splitMovieDropdown',
+            function () { return allMovies; }, pickSplitMovie, clearSplitMovieSelection);
+
+        view.querySelector('#selectSplitType').addEventListener('change', function () {
+            var isMovie = this.value === 'movie';
+            if (isMovie) loadMovies();
+            view.querySelector('#splitSeriesPickerRow').style.display = isMovie ? 'none' : 'flex';
+            view.querySelector('#splitMoviePickerRow').style.display  = isMovie ? 'flex' : 'none';
+            view.querySelector('#btnRunSplit').disabled = isMovie
+                ? !view.querySelector('#selectedSplitMovieId').value
+                : !view.querySelector('#selectedSplitSeriesId').value;
+        });
+
+        view.querySelector('#btnRunSplit').addEventListener('click', startSplit);
+
+        view.querySelector('#btnSplitCancel').addEventListener('click', function () {
+            if (splitJobId) apiDelete('strmcompanion/splitversion/job/' + splitJobId);
+            stopSplitPoll();
+            showSplitControls();
+        });
+
+        view.querySelector('#btnSplitReset').addEventListener('click', showSplitControls);
+
         // ============================================================= FOOTER
         function applyPluginTheme() {
             var candidates = ['.skinHeader', '.mainDrawer', '.contentScrollSlider', 'body'];
@@ -1509,6 +1762,8 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             showQueueView();
             renderQueue();
             loadSeries();
+            moviesLoaded = false;
+            if (view.querySelector('#selectSplitType').value === 'movie') loadMovies();
             loadIntroLastRun();
 
             // Always start on Home tab

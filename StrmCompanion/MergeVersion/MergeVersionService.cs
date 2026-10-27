@@ -406,12 +406,7 @@ namespace StrmCompanion.MergeVersion
             try
             {
                 var libraryOptions = _libraryManager.GetLibraryOptions(series);
-                var refreshOptions = new MetadataRefreshOptions(new DirectoryService(_logger, _fileSystem))
-                {
-                    MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-                    ImageRefreshMode    = MetadataRefreshMode.ValidationOnly,
-                    ReplaceAllImages    = false
-                };
+                var refreshOptions = RefreshOptionsFactory.FullMetadataRefresh(_logger, _fileSystem);
                 await _providerManager
                     .RefreshSingleItem(series, refreshOptions, new BaseItem[0], libraryOptions, ct)
                     .ConfigureAwait(false);

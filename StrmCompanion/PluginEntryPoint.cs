@@ -40,6 +40,7 @@ namespace StrmCompanion
         public static AnalysisTaskRegistry TaskRegistry { get; private set; }
         public static IItemRepository ItemRepository { get; private set; }
         public static MergeVersionService MergeVersionService { get; private set; }
+        public static SplitVersionService SplitVersionService { get; private set; }
         public static MediaInfoScheduledTask MediaInfoTask { get; private set; }
         public static ITaskManager TaskManager { get; private set; }
 
@@ -72,6 +73,9 @@ namespace StrmCompanion
             TaskManager = _taskManager;
 
             MergeVersionService = new MergeVersionService(
+                _libraryManager, _providerManager, _fileSystem, JobManager, _logManager);
+
+            SplitVersionService = new SplitVersionService(
                 _libraryManager, _providerManager, _fileSystem, JobManager, _logManager);
 
             var introTask = new IntroDetectionAnalysisTask(

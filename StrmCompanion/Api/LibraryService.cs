@@ -23,6 +23,10 @@ namespace StrmCompanion.Api
         public long SeriesId { get; set; }
     }
 
+    [Route("/strmcompanion/movies", "GET", Summary = "List all movies in library")]
+    [Authenticated]
+    public class GetMovieList : IReturn<List<SeriesDto>> { }
+
     public class SeriesDto
     {
         public long Id { get; set; }
@@ -60,6 +64,26 @@ namespace StrmCompanion.Api
                 Id = s.InternalId,
                 Name = s.Name
             }).ToList();
+        }
+
+        public object Get(GetMovieList request)
+        {
+            var query = new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Movie" },
+                IsVirtualItem = false,
+                OrderBy = new[] { (ItemSortBy.SortName, SortOrder.Ascending) }
+            };
+
+            // Secondary merged versions would show up as duplicate entries of their primary movie.
+            var result = _libraryManager.QueryItems(query);
+            return result.Items
+                .Where(m => !(m is Video v && v.IsSecondaryMergedItemInSameFolder))
+                .Select(m => new SeriesDto
+                {
+                    Id = m.InternalId,
+                    Name = m.Name
+                }).ToList();
         }
 
         public object Get(GetSeasonList request)

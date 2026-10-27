@@ -825,6 +825,88 @@
                     <button id="btnMergeReset" is="emby-button" class="raised emby-button" type="button">Run another merge</button>
                 </div>
 
+                <!-- ── Split Versions ─────────────────────────────────── -->
+                <div class="verticalSection" style="margin-top:30px;border-top:1px solid var(--plugin-input-border,rgba(255,255,255,0.2));padding-top:20px;">
+                    <div class="sectionTitleContainer">
+                        <h2 class="sectionTitle">Split Versions</h2>
+                    </div>
+                    <p class="sc-info">Splits alternate versions of a series, season or movie back into separate items (reverse of Merge Version).</p>
+
+                    <div id="splitControls">
+                        <div class="inputContainer" style="max-width:240px;">
+                            <label class="inputLabel inputLabelUnfocused" for="selectSplitType">Type</label>
+                            <select id="selectSplitType" is="emby-select" class="emby-select-withcolor emby-select">
+                                <option value="series">Series / Season</option>
+                                <option value="movie">Movie</option>
+                            </select>
+                        </div>
+
+                        <div id="splitSeriesPickerRow" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+                            <div class="inputContainer" style="flex:1;min-width:180px;position:relative;">
+                                <label class="inputLabel inputLabelUnfocused" for="splitSeriesSearch">Series</label>
+                                <input id="splitSeriesSearch" is="emby-input" type="text" class="emby-input" placeholder="Type to search..." autocomplete="off" />
+                                <input type="hidden" id="selectedSplitSeriesId" value="" />
+                                <input type="hidden" id="selectedSplitSeriesName" value="" />
+                                <div id="splitSeriesDropdown" class="sc-series-dropdown"></div>
+                            </div>
+                            <div class="inputContainer" style="flex:1;min-width:180px;">
+                                <label class="inputLabel inputLabelUnfocused" for="selectSplitSeason">Season</label>
+                                <select id="selectSplitSeason" is="emby-select" class="emby-select-withcolor emby-select" disabled>
+                                    <option value="">- Select a series first -</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="splitMoviePickerRow" style="display:none;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+                            <div class="inputContainer" style="flex:1;min-width:180px;position:relative;">
+                                <label class="inputLabel inputLabelUnfocused" for="splitMovieSearch">Movie</label>
+                                <input id="splitMovieSearch" is="emby-input" type="text" class="emby-input" placeholder="Type to search..." autocomplete="off" />
+                                <input type="hidden" id="selectedSplitMovieId" value="" />
+                                <input type="hidden" id="selectedSplitMovieName" value="" />
+                                <div id="splitMovieDropdown" class="sc-series-dropdown"></div>
+                            </div>
+                        </div>
+
+                        <button id="btnRunSplit" is="emby-button" class="raised button-submit emby-button" type="button" disabled style="margin-top:16px;">Split Versions</button>
+                    </div>
+
+                    <!-- Progress -->
+                    <div id="splitProgressSection" style="display:none;">
+                        <div class="sectionTitleContainer">
+                            <h2 class="sectionTitle">Splitting...</h2>
+                        </div>
+                        <p id="splitStatusText" class="sectionText" style="margin-bottom:8px;">Starting...</p>
+                        <div class="sc-progress-wrap">
+                            <div id="splitProgressBar" class="sc-progress-bar"></div>
+                        </div>
+                        <button id="btnSplitCancel" is="emby-button" class="raised emby-button" type="button">Cancel</button>
+
+                        <div id="splitScanLiveWrap" style="display:none;margin-top:20px;">
+                            <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:6px;">Processed so far</div>
+                            <div style="max-height:400px;overflow-y:auto;">
+                                <table class="sc-marker-table">
+                                    <thead><tr><th>Item</th><th>Result</th></tr></thead>
+                                    <tbody id="splitScanLiveRows"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Results -->
+                    <div id="splitResultsSection" style="display:none;">
+                        <div class="sectionTitleContainer">
+                            <h2 id="splitResultTitle" class="sectionTitle">Results</h2>
+                        </div>
+                        <p id="splitResultSummary" class="sectionText"></p>
+                        <table class="sc-marker-table">
+                            <thead><tr><th>Item</th><th>Result</th></tr></thead>
+                            <tbody id="splitResultRows"></tbody>
+                        </table>
+                        <br/>
+                        <button id="btnSplitReset" is="emby-button" class="raised emby-button" type="button">Run another split</button>
+                    </div>
+                </div>
+
             </div><!-- /scMainMerge -->
 
             <div id="scMainSettings" style="display:none;"></div><!-- /scMainSettings -->
