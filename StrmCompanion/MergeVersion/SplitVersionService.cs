@@ -70,6 +70,66 @@ namespace StrmCompanion.MergeVersion
             return job.JobId;
         }
 
+        // scope: "all" (movies and episodes), "movies" or "series".
+        public string StartSplitAll(string scope)
+        {
+            scope = (scope ?? "all").ToLowerInvariant();
+            string[] types;
+            string name;
+            switch (scope)
+            {
+                case "movies": types = new[] { "Movie" }; name = "All movies"; break;
+                case "series": types = new[] { "Episode" }; name = "All series"; break;
+                case "all": types = new[] { "Movie", "Episode" }; name = "All movies and series"; break;
+                default: throw new ArgumentException("Invalid scope: " + scope);
+            }
+
+            var job = _jobManager.CreateJob("split-version", 0, name);
+            var token = _jobManager.GetCancellationToken(job.JobId);
+            Task.Run(() => RunAll(job, types, token));
+            return job.JobId;
+        }
+
+        private void RunAll(JobInfo job, string[] types, CancellationToken ct)
+        {
+            RunJob(job, ct, () =>
+            {
+                _jobManager.UpdateProgress(job.JobId, 0, "Finding merged items...");
+
+                var items = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = types,
+                    IsVirtualItem = false,
+                    Recursive = true
+                }).OfType<Video>()
+                  .Where(v => !v.IsSecondaryMergedItemInSameFolder)
+                  .ToList();
+
+                _logger.Info("StrmCompanion SplitVersion: found {0} item(s) to check library-wide ({1})",
+                    items.Count, string.Join(", ", types));
+
+                var processed = new HashSet<long>();
+                int total = items.Count;
+                int done = 0;
+
+                foreach (var item in items)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    done++;
+                    _jobManager.UpdateProgress(job.JobId, (double)done / Math.Max(1, total) * 100.0,
+                        $"Processing {done}/{total}...");
+
+                    if (processed.Contains(item.InternalId)) continue;
+
+                    var ep = item as Episode;
+                    var title = ep != null ? ep.SeriesName + " — " + ep.Name : item.Name;
+                    var altIds = SplitOne(item, title, job);
+                    processed.Add(item.InternalId);
+                    foreach (var altId in altIds) processed.Add(altId);
+                }
+            });
+        }
+
         private void RunSeries(JobInfo job, Series series, long? seasonId, CancellationToken ct)
         {
             RunJob(job, ct, () =>

@@ -1447,11 +1447,24 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             view.querySelector('#btnRunSplit').disabled = true;
         }
 
+        var splitAllScopes = {
+            'all-movies': { scope: 'movies', label: 'ALL movies' },
+            'all-series': { scope: 'series', label: 'ALL series' },
+            'all':        { scope: 'all',    label: 'ALL movies and series' }
+        };
+
         function startSplit() {
-            var isMovie = view.querySelector('#selectSplitType').value === 'movie';
+            var type    = view.querySelector('#selectSplitType').value;
+            var isMovie = type === 'movie';
+            var allScope = splitAllScopes[type];
             var endpoint, body;
 
-            if (isMovie) {
+            if (allScope) {
+                if (!confirm('Are you sure? This will split alternate versions of ' + allScope.label +
+                        ' in every library back into separate items.')) return;
+                endpoint = 'strmcompanion/splitversion/runall';
+                body = { Scope: allScope.scope };
+            } else if (isMovie) {
                 var movieId = view.querySelector('#selectedSplitMovieId').value;
                 if (!movieId) return;
                 endpoint = 'strmcompanion/splitversion/runmovie';
@@ -1598,10 +1611,11 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         view.querySelector('#selectSplitType').addEventListener('change', function () {
             var isMovie = this.value === 'movie';
+            var isAll   = !!splitAllScopes[this.value];
             if (isMovie) loadMovies();
-            view.querySelector('#splitSeriesPickerRow').style.display = isMovie ? 'none' : 'flex';
+            view.querySelector('#splitSeriesPickerRow').style.display = (isMovie || isAll) ? 'none' : 'flex';
             view.querySelector('#splitMoviePickerRow').style.display  = isMovie ? 'flex' : 'none';
-            view.querySelector('#btnRunSplit').disabled = isMovie
+            view.querySelector('#btnRunSplit').disabled = isAll ? false : isMovie
                 ? !view.querySelector('#selectedSplitMovieId').value
                 : !view.querySelector('#selectedSplitSeriesId').value;
         });

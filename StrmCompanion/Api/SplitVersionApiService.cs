@@ -24,6 +24,14 @@ namespace StrmCompanion.Api
         public long MovieId { get; set; }
     }
 
+    [Route("/strmcompanion/splitversion/runall", "POST", Summary = "Start a library-wide split version job")]
+    [Authenticated]
+    public class StartSplitAllVersions : IReturn<StartJobResponse>
+    {
+        // "all", "movies" or "series"
+        public string Scope { get; set; }
+    }
+
     [Route("/strmcompanion/splitversion/job/{JobId}", "GET", Summary = "Poll split version job status")]
     [Authenticated]
     public class GetSplitVersionJobStatus : IReturn<JobInfo>
@@ -66,6 +74,16 @@ namespace StrmCompanion.Api
                 throw new Exception("SplitVersionService is not initialized");
 
             var jobId = svc.StartSplitMovie(request.MovieId);
+            return new StartJobResponse { JobId = jobId };
+        }
+
+        public object Post(StartSplitAllVersions request)
+        {
+            var svc = PluginEntryPoint.SplitVersionService;
+            if (svc == null)
+                throw new Exception("SplitVersionService is not initialized");
+
+            var jobId = svc.StartSplitAll(request.Scope);
             return new StartJobResponse { JobId = jobId };
         }
 
