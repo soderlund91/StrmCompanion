@@ -90,12 +90,17 @@ namespace StrmCompanion.Api
             if (jobManager == null)
                 throw new Exception("JobManager is not initialized");
 
-            var running = jobManager.GetAllJobs()
-                .FirstOrDefault(j => j.TaskId == "merge-version" && j.Status == JobStatus.Running);
-            if (running != null)
-                return new StartJobResponse { JobId = running.JobId };
+            // Reuse a global merge that is queued or running. Auto-detect library jobs are not reused:
+            // they cover a single library, and VersionJobLock makes the new job wait for them.
+            var svc = PluginEntryPoint.MergeVersionService;
+            if (svc == null)
+                throw new Exception("MergeVersionService is not initialized");
 
-            var job = jobManager.CreateJob("merge-version", 0, "Merge Version", null, null);
+            var active = svc.ActiveGlobalJobId;
+            if (active != null)
+                return new StartJobResponse { JobId = active };
+
+            var job = svc.CreateGlobalJob();
             MergeVersionScheduledTask.SetPendingJobId(job.JobId);
             PluginEntryPoint.TaskManager?.QueueScheduledTask<MergeVersionScheduledTask>();
 

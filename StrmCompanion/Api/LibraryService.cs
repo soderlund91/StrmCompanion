@@ -72,13 +72,13 @@ namespace StrmCompanion.Api
             {
                 IncludeItemTypes = new[] { "Movie" },
                 IsVirtualItem = false,
+                // Merged versions share a PresentationUniqueKey; list each merged movie once.
+                GroupByPresentationUniqueKey = true,
                 OrderBy = new[] { (ItemSortBy.SortName, SortOrder.Ascending) }
             };
 
-            // Secondary merged versions would show up as duplicate entries of their primary movie.
             var result = _libraryManager.QueryItems(query);
             return result.Items
-                .Where(m => !(m is Video v && v.IsSecondaryMergedItemInSameFolder))
                 .Select(m => new SeriesDto
                 {
                     Id = m.InternalId,

@@ -783,18 +783,29 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 .then(function (stats) {
                     loading.style.display = 'none';
 
-                    view.querySelector('#statMoviesTotal').textContent     = stats.TotalMovies    != null ? stats.TotalMovies    : '–';
-                    view.querySelector('#statMoviesScanned').textContent   = stats.ScannedMovies  != null ? stats.ScannedMovies  : '–';
-                    view.querySelector('#statEpisodesTotal').textContent   = stats.TotalEpisodes  != null ? stats.TotalEpisodes  : '–';
-                    view.querySelector('#statEpisodesScanned').textContent = stats.ScannedEpisodes != null ? stats.ScannedEpisodes : '–';
+                    var movies   = stats.Movies;
+                    var episodes = stats.Episodes;
+                    var all = {
+                        Total:      movies.Total      + episodes.Total,
+                        Scanned:    movies.Scanned    + episodes.Scanned,
+                        NotScanned: movies.NotScanned + episodes.NotScanned,
+                        Failed:     movies.Failed     + episodes.Failed,
+                        Queued:     movies.Queued     + episodes.Queued
+                    };
+                    renderStatsRow('Movies', movies);
+                    renderStatsRow('Episodes', episodes);
+                    renderStatsRow('All', all);
 
-                    var mp = view.querySelector('#statMoviesPending');
-                    mp.textContent = stats.PendingMovies != null ? stats.PendingMovies : '–';
-                    mp.classList.toggle('has-pending', stats.PendingMovies > 0);
+                    view.querySelector('#mediaFailedCount').textContent = all.Failed;
 
-                    var ep = view.querySelector('#statEpisodesPending');
-                    ep.textContent = stats.PendingEpisodes != null ? stats.PendingEpisodes : '–';
-                    ep.classList.toggle('has-pending', stats.PendingEpisodes > 0);
+                    var coverage = view.querySelector('#statsCoverage');
+                    coverage.style.display = all.Total > 0 ? '' : 'none';
+                    if (all.Total > 0) {
+                        // Rounded down so 100% is only shown when every item really is scanned.
+                        var pct = Math.floor(all.Scanned / all.Total * 100);
+                        view.querySelector('#statsCoverageBar').style.width = pct + '%';
+                        view.querySelector('#statsCoverageText').textContent = pct + '% of .strm files have media info';
+                    }
                 })
                 .catch(function (err) {
                     console.error('StrmCompanion MediaInfo: stats error', err);
@@ -803,7 +814,69 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                 });
         }
 
+        function renderStatsRow(prefix, row) {
+            function cell(name) { return view.querySelector('#stat' + prefix + name); }
+            cell('Total').textContent      = row.Total;
+            cell('Scanned').textContent    = row.Scanned;
+            cell('NotScanned').textContent = row.NotScanned;
+            cell('Failed').textContent     = row.Failed;
+            cell('Queued').textContent     = row.Queued;
+            cell('NotScanned').classList.toggle('has-pending', row.NotScanned > 0);
+            cell('Failed').classList.toggle('has-failed', row.Failed > 0);
+            cell('Queued').classList.toggle('has-queued', row.Queued > 0);
+        }
+
+        function formatRetry(item) {
+            if (item.RetryNow || new Date(item.NextRetryUtc) <= new Date()) return 'Next scan';
+            return new Date(item.NextRetryUtc).toLocaleString();
+        }
+
+        function loadMediaFailed() {
+            var list = view.querySelector('#mediaFailedList');
+            list.innerHTML = '<span style="color:#aaa;">Loading failed items...</span>';
+            apiGet('strmcompanion/mediainfo/failed')
+                .then(function (result) {
+                    view.querySelector('#mediaFailedCount').textContent = result.TotalCount;
+                    view.querySelector('#btnRetryFailed').disabled = result.TotalCount === 0;
+                    if (result.TotalCount === 0) {
+                        list.innerHTML = '<span style="color:#aaa;">No failed items.</span>';
+                        return;
+                    }
+                    var rows = result.Items.map(function (item) {
+                        return '<tr>' +
+                            '<td>' + escapeHtml(item.Name || '') + '</td>' +
+                            '<td>' + escapeHtml(item.LastError || '') + '</td>' +
+                            '<td>' + item.FailureCount + '</td>' +
+                            '<td>' + escapeHtml(new Date(item.LastAttemptUtc).toLocaleString()) + '</td>' +
+                            '<td>' + escapeHtml(formatRetry(item)) + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    var note = result.TotalCount > result.Items.length
+                        ? '<p class="sc-info">Showing the ' + result.Items.length + ' most recent of ' + result.TotalCount + ' failed items.</p>'
+                        : '';
+                    list.innerHTML = note + '<table class="sc-failed-table"><thead><tr>' +
+                        '<th>Item</th><th>Reason</th><th>Attempts</th><th>Last attempt</th><th>Next retry</th>' +
+                        '</tr></thead><tbody>' + rows + '</tbody></table>';
+                })
+                .catch(function (err) {
+                    console.error('StrmCompanion MediaInfo: failed items error', err);
+                    list.innerHTML = '<span style="color:#cc4444;">Could not load failed items.</span>';
+                });
+        }
+
+        function refreshMediaFailedIfOpen() {
+            if (view.querySelector('#mediaFailedBody').style.display !== 'none') loadMediaFailed();
+        }
+
         function startMediaScan() {
+            runMediaScan('strmcompanion/mediainfo/scan');
+        }
+
+        function retryFailedItems() {
+            runMediaScan('strmcompanion/mediainfo/failed/retry');
+        }
+
+        function runMediaScan(startPath) {
             mediaLiveRendered = {};
             mediaStatsTick    = 0;
             view.querySelector('#mediaHistoryRows').innerHTML         = '';
@@ -815,7 +888,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             view.querySelector('#mediaStatusText').textContent        = 'Starting...';
             view.querySelector('#mediaProgressBar').style.width       = '0%';
 
-            apiPost('strmcompanion/mediainfo/scan')
+            apiPost(startPath)
                 .then(function (resp) { mediaJobId = resp.JobId; startMediaPoll(); })
                 .catch(function (err) {
                     console.error('StrmCompanion MediaInfo: start scan error', err);
@@ -920,6 +993,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
             updateMediaHistoryTable(job);
             loadMediaStats();
+            refreshMediaFailedIfOpen();
         }
 
         function showMediaControls() {
@@ -936,8 +1010,8 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
             apiGet('strmcompanion/mediainfo/jobs')
                 .then(function (jobs) {
-                    // Reconnect to a running job
-                    var running = (jobs || []).find(function (j) { return j.Status === 'Running'; });
+                    // Reconnect to a running full scan; auto-scan jobs must not hide the scan controls
+                    var running = (jobs || []).find(function (j) { return j.Status === 'Running' && !j.IsAutoScan; });
                     if (running) {
                         mediaJobId = running.JobId;
                         view.querySelector('#mediaScanControls').style.display    = 'none';
@@ -949,7 +1023,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                         return null;
                     }
                     var finished = (jobs || []).filter(function (j) {
-                        return j.Status === 'Completed' || j.Status === 'Cancelled' || j.Status === 'Failed';
+                        return !j.IsAutoScan && (j.Status === 'Completed' || j.Status === 'Cancelled' || j.Status === 'Failed');
                     });
                     if (finished.length === 0) return null;
                     return apiGet('strmcompanion/mediainfo/job/' + finished[0].JobId);
@@ -981,7 +1055,11 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         }
 
         view.querySelector('#btnStartScan').addEventListener('click', startMediaScan);
-        view.querySelector('#btnRefreshStats').addEventListener('click', loadMediaStats);
+        view.querySelector('#btnRefreshStats').addEventListener('click', function () {
+            loadMediaStats();
+            refreshMediaFailedIfOpen();
+        });
+        view.querySelector('#btnRetryFailed').addEventListener('click', retryFailedItems);
         view.querySelector('#btnMediaCancel').addEventListener('click', function () {
             if (mediaJobId) apiDelete('strmcompanion/mediainfo/job/' + mediaJobId);
             stopMediaPoll();
@@ -1010,6 +1088,7 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         wireExpand('#mergeSettingsHeader', '#mergeSettingsBody');
         wireExpand('#markersHeader', '#markersExpandBody');
         wireExpand('#fpDbHeader', '#fpDbBody', loadFingerprintDatabase);
+        wireExpand('#mediaFailedHeader', '#mediaFailedBody', loadMediaFailed);
 
         function loadIntroSettings() {
             apiGet('strmcompanion/settings')
@@ -1033,11 +1112,15 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
             var warnEl = view.querySelector('#noLibrariesWarn');
             apiGet('strmcompanion/mediainfo/settings')
                 .then(function (cfg) {
-                    var hasLibs = cfg.MediaInfoLibraryIds && cfg.MediaInfoLibraryIds.length > 0;
+                    var hasLibs = cfg.MediaInfoAllLibraries || (cfg.MediaInfoLibraryIds && cfg.MediaInfoLibraryIds.length > 0);
                     if (warnEl) warnEl.style.display = hasLibs ? 'none' : '';
 
+                    view.querySelector('#chkAllLibraries').checked = !!cfg.MediaInfoAllLibraries;
                     view.querySelector('#numConcurrency').value = cfg.MediaInfoConcurrency || 2;
                     view.querySelector('#chkAutoScan').checked  = !!cfg.MediaInfoAutoScan;
+                    view.querySelector('#numFirstRetryDays').value  = cfg.MediaInfoFirstRetryDays  || 1;
+                    view.querySelector('#numSecondRetryDays').value = cfg.MediaInfoSecondRetryDays || 3;
+                    view.querySelector('#numLaterRetryDays').value  = cfg.MediaInfoLaterRetryDays  || 7;
                     var ids = (cfg.MediaInfoLibraryIds || '').split(',')
                         .map(function (s) { return s.trim(); }).filter(Boolean);
                     renderLibraries(ids);
@@ -1067,10 +1150,28 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
                         label.appendChild(span);
                         container.appendChild(label);
                     });
+                    applyAllLibraries();
                 })
                 .catch(function () {
                     container.innerHTML = '<span style="color:#cc4444;font-size:13px;">Failed to load libraries.</span>';
                 });
+        }
+
+        // While "All libraries" is on, every library shows as ticked and locked.
+        // The manual selection is kept so it comes back when the option is turned off.
+        function applyAllLibraries() {
+            var all  = view.querySelector('#chkAllLibraries').checked;
+            var list = view.querySelector('#libraryList');
+            list.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+                if (all && !cb.disabled) {
+                    cb.dataset.manualChecked = cb.checked ? '1' : '';
+                    cb.checked = true;
+                } else if (!all && cb.disabled) {
+                    cb.checked = cb.dataset.manualChecked === '1';
+                }
+                cb.disabled = all;
+            });
+            list.style.opacity = all ? '0.6' : '';
         }
 
         function saveIntroSettings() {
@@ -1101,17 +1202,32 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
         }
 
         function saveMediaSettings() {
-            var checkboxes = view.querySelectorAll('#libraryList input[type=checkbox]:checked');
-            var selectedIds = Array.prototype.slice.call(checkboxes).map(function (cb) { return cb.value; }).join(',');
+            var allLibraries = view.querySelector('#chkAllLibraries').checked;
+            var checkboxes = view.querySelectorAll('#libraryList input[type=checkbox]');
+            var selectedIds = Array.prototype.slice.call(checkboxes)
+                .filter(function (cb) { return cb.disabled ? cb.dataset.manualChecked === '1' : cb.checked; })
+                .map(function (cb) { return cb.value; })
+                .join(',');
             var body = {
                 MediaInfoLibraryIds:  selectedIds,
+                MediaInfoAllLibraries: allLibraries,
                 MediaInfoConcurrency: parseInt(view.querySelector('#numConcurrency').value, 10) || 2,
-                MediaInfoAutoScan:    view.querySelector('#chkAutoScan').checked
+                MediaInfoAutoScan:    view.querySelector('#chkAutoScan').checked,
+                MediaInfoFirstRetryDays:  parseInt(view.querySelector('#numFirstRetryDays').value, 10)  || 1,
+                MediaInfoSecondRetryDays: parseInt(view.querySelector('#numSecondRetryDays').value, 10) || 3,
+                MediaInfoLaterRetryDays:  parseInt(view.querySelector('#numLaterRetryDays').value, 10)  || 7
             };
             apiPost('strmcompanion/mediainfo/settings', body)
-                .then(function () {
+                .then(function (saved) {
+                    // Show the values the server actually stored, since it limits them to its allowed range.
+                    if (saved) {
+                        view.querySelector('#numFirstRetryDays').value  = saved.MediaInfoFirstRetryDays;
+                        view.querySelector('#numSecondRetryDays').value = saved.MediaInfoSecondRetryDays;
+                        view.querySelector('#numLaterRetryDays').value  = saved.MediaInfoLaterRetryDays;
+                    }
+                    refreshMediaFailedIfOpen();
                     var warnEl = view.querySelector('#noLibrariesWarn');
-                    if (warnEl) warnEl.style.display = selectedIds ? 'none' : '';
+                    if (warnEl) warnEl.style.display = (allLibraries || selectedIds) ? 'none' : '';
                     var msg = view.querySelector('#mediaSettingsSavedMsg');
                     msg.style.display = '';
                     setTimeout(function () { msg.style.display = 'none'; }, 2500);
@@ -1124,14 +1240,15 @@ define(['emby-button', 'emby-select', 'emby-input'], function () {
 
         view.querySelector('#btnSaveIntroSettings').addEventListener('click', saveIntroSettings);
         view.querySelector('#btnSaveMediaSettings').addEventListener('click', saveMediaSettings);
+        view.querySelector('#chkAllLibraries').addEventListener('change', applyAllLibraries);
 
         // ============================================================= MERGE VERSION
 
         function loadMergeLastRun() {
             apiGet('strmcompanion/mergeversion/jobs')
                 .then(function (jobs) {
-                    // Reconnect to a running job
-                    var running = (jobs || []).find(function (j) { return j.Status === 'Running'; });
+                    // Reconnect to a running or queued job
+                    var running = (jobs || []).find(function (j) { return j.Status === 'Running' || j.Status === 'Queued'; });
                     if (running && !mergeJobId && Object.keys(mergeLiveRendered).length === 0) {
                         mergeJobId = running.JobId;
                         view.querySelector('#mergeControls').style.display        = 'none';

@@ -7,6 +7,7 @@ namespace StrmCompanion.Jobs
     {
         public string JobId { get; set; }
         public string TaskId { get; set; }
+        public bool IsAutoScan { get; set; }
         public string SeriesName { get; set; }
         public long SeriesInternalId { get; set; }
         public string SeasonName { get; set; }

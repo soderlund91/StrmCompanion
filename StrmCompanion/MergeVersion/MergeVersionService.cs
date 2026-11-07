@@ -28,6 +28,9 @@ namespace StrmCompanion.MergeVersion
         private readonly JobManager _jobManager;
         private readonly ILogger _logger;
 
+        private readonly object _startLock = new object();
+        private string _globalJobId;
+
         public MergeVersionService(
             ILibraryManager libraryManager,
             IProviderManager providerManager,
@@ -42,39 +45,100 @@ namespace StrmCompanion.MergeVersion
             _logger = logManager.GetLogger(nameof(MergeVersionService));
         }
 
+        // Id of the latest global merge while it is queued or running, otherwise null.
+        public string ActiveGlobalJobId
+        {
+            get
+            {
+                var job = GetGlobalJob();
+                return job != null && (job.Status == JobStatus.Queued || job.Status == JobStatus.Running)
+                    ? job.JobId : null;
+            }
+        }
+
+        private JobInfo GetGlobalJob() =>
+            _globalJobId != null ? _jobManager.GetJob(_globalJobId) : null;
+
+        // A global merge that is still waiting for the lock has not collected its groups yet,
+        // so it will cover everything a new trigger would.
+        private JobInfo GetQueuedGlobalJob()
+        {
+            var job = GetGlobalJob();
+            return job != null && job.Status == JobStatus.Queued ? job : null;
+        }
+
+        // Creates a queued global job for the API; it is started later by the scheduled task.
+        // Registering it now lets other triggers reuse it instead of queuing a second global merge.
+        public JobInfo CreateGlobalJob()
+        {
+            lock (_startLock)
+            {
+                var job = _jobManager.CreateJob("merge-version", 0, "Merge Version", null, null);
+                _globalJobId = job.JobId;
+                return job;
+            }
+        }
+
         public string StartMerge(CollectionFolder currentScanLibrary, CancellationToken externalCt, string existingJobId = null)
         {
-            var job = (existingJobId != null ? _jobManager?.GetJob(existingJobId) : null)
-                      ?? _jobManager.CreateJob("merge-version", 0, "Merge Version", null, null);
-            var token = _jobManager.GetCancellationToken(job.JobId);
-            Task.Run(() => RunAsync(job, currentScanLibrary, token), token);
-            return job.JobId;
+            lock (_startLock)
+            {
+                // An explicit job id comes from the API and the UI is polling it, so it always runs.
+                var queued = GetQueuedGlobalJob();
+                if (existingJobId == null && currentScanLibrary == null && queued != null)
+                {
+                    _logger.Info("StrmCompanion MergeVersion: reusing queued global merge job {0}", queued.JobId);
+                    return queued.JobId;
+                }
+
+                var job = (existingJobId != null ? _jobManager?.GetJob(existingJobId) : null)
+                          ?? _jobManager.CreateJob("merge-version", 0, "Merge Version", null, null);
+                if (currentScanLibrary == null)
+                    _globalJobId = job.JobId;
+                var token = _jobManager.GetCancellationToken(job.JobId);
+                Task.Run(() => RunAsync(job, currentScanLibrary, token), token);
+                return job.JobId;
+            }
         }
 
         public string StartMergeForLibrary(CollectionFolder library, bool isEpisode, CancellationToken externalCt)
         {
-            var job = _jobManager.CreateJob("merge-version", 0, "Merge Version (auto-detect)", null, null);
-            var token = _jobManager.GetCancellationToken(job.JobId);
-            Task.Run(() => RunLibraryMergeAsync(job, library, isEpisode, token), token);
-            return job.JobId;
+            lock (_startLock)
+            {
+                var queued = GetQueuedGlobalJob();
+                if (queued != null)
+                {
+                    _logger.Info("StrmCompanion MergeVersion auto-detect: '{0}' covered by queued global merge job {1}",
+                        library.Name, queued.JobId);
+                    return queued.JobId;
+                }
+
+                var job = _jobManager.CreateJob("merge-version", 0, "Merge Version (auto-detect)", null, null);
+                var token = _jobManager.GetCancellationToken(job.JobId);
+                Task.Run(() => RunLibraryMergeAsync(job, library, isEpisode, token), token);
+                return job.JobId;
+            }
         }
 
         private Task RunLibraryMergeAsync(JobInfo job, CollectionFolder library, bool isEpisode, CancellationToken ct)
         {
             try
             {
-                var parents = new[] { library.InternalId };
-                if (isEpisode)
+                using (VersionJobLock.Acquire(_jobManager, job.JobId, ct))
                 {
-                    _logger.Info("StrmCompanion MergeVersion auto-detect: merging episodes in '{0}'", library.Name);
-                    ExecuteMergeEpisodes(parents, job, ct);
+                    var parents = new[] { library.InternalId };
+                    if (isEpisode)
+                    {
+                        _logger.Info("StrmCompanion MergeVersion auto-detect: merging episodes in '{0}'", library.Name);
+                        ExecuteMergeEpisodes(parents, job, ct);
+                    }
+                    else
+                    {
+                        _logger.Info("StrmCompanion MergeVersion auto-detect: merging movies in '{0}'", library.Name);
+                        ExecuteMergeMovies(parents, job, ct);
+                    }
+                    _jobManager.CompleteJob(job.JobId);
                 }
-                else
-                {
-                    _logger.Info("StrmCompanion MergeVersion auto-detect: merging movies in '{0}'", library.Name);
-                    ExecuteMergeMovies(parents, job, ct);
-                }
-                _jobManager.CompleteJob(job.JobId);
             }
             catch (OperationCanceledException)
             {
@@ -92,76 +156,10 @@ namespace StrmCompanion.MergeVersion
         {
             try
             {
-                var cfg = Plugin.Instance.Configuration;
-
-                // Phase 1: Series (if enabled)
-                if (cfg.MergeSeriesScope != "Disabled")
+                using (VersionJobLock.Acquire(_jobManager, job.JobId, ct))
                 {
-                    _jobManager.UpdateProgress(job.JobId, 0, "Processing series...");
-                    _logger.Info("StrmCompanion MergeVersion: series scope = {0}", cfg.MergeSeriesScope);
-
-                    var tvLibraries = PrepareMergeSeries();
-                    foreach (var lib in tvLibraries)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        var parents = new[] { lib.InternalId };
-
-                        var duplicates = FindDuplicateSeries(parents);
-                        _logger.Info("StrmCompanion MergeVersion: found {0} duplicate series in '{1}'",
-                            duplicates.Count, lib.Name);
-                        foreach (var series in duplicates)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            await RefreshSeriesAsync(series, ct).ConfigureAwait(false);
-                        }
-
-                        var inconsistent = FindInconsistentSeries(parents);
-                        _logger.Info("StrmCompanion MergeVersion: found {0} inconsistent series in '{1}'",
-                            inconsistent.Count, lib.Name);
-                        foreach (var series in inconsistent)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            await RefreshSeriesAsync(series, ct).ConfigureAwait(false);
-                        }
-                    }
-
-                    // Merge episode alternate versions in all TV libraries
-                    var allTvLibs = GetAllTvLibraries();
-                    _logger.Info("StrmCompanion MergeVersion: merging episode versions across {0} TV library(s)", allTvLibs.Count);
-                    foreach (var lib in allTvLibs)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        ExecuteMergeEpisodes(new[] { lib.InternalId }, job, ct);
-                    }
+                    await RunPhasesAsync(job, currentScanLibrary, ct).ConfigureAwait(false);
                 }
-
-                // Phase 2: Movies
-                _jobManager.UpdateProgress(job.JobId, 5, "Processing movies...");
-                _logger.Info("StrmCompanion MergeVersion: movies scope = {0}", Plugin.Instance.Configuration.MergeMoviesScope);
-
-                var movieGroups = PrepareMergeMovies(currentScanLibrary);
-                int total = movieGroups.Length;
-                int processed = 0;
-
-                if (total == 0)
-                {
-                    _jobManager.UpdateProgress(job.JobId, 100, "No movie libraries found");
-                    _jobManager.CompleteJob(job.JobId);
-                    return;
-                }
-
-                foreach (var parents in movieGroups)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    ExecuteMergeMovies(parents, job, ct);
-                    processed++;
-                    _jobManager.UpdateProgress(job.JobId,
-                        5 + (double)processed / total * 95.0,
-                        $"Processed {processed}/{total} library group(s)");
-                }
-
-                _jobManager.CompleteJob(job.JobId);
-                _logger.Info("StrmCompanion MergeVersion: complete");
             }
             catch (OperationCanceledException)
             {
@@ -173,8 +171,80 @@ namespace StrmCompanion.MergeVersion
                 _logger.Error("StrmCompanion MergeVersion: job {0} failed: {1}", job.JobId, ex.Message);
                 _jobManager.FailJob(job.JobId, ex.Message);
             }
+        }
 
-            await Task.CompletedTask.ConfigureAwait(false);
+        private async Task RunPhasesAsync(JobInfo job, CollectionFolder currentScanLibrary, CancellationToken ct)
+        {
+            var cfg = Plugin.Instance.Configuration;
+
+            // Phase 1: Series (if enabled)
+            if (cfg.MergeSeriesScope != "Disabled")
+            {
+                _jobManager.UpdateProgress(job.JobId, 0, "Processing series...");
+                _logger.Info("StrmCompanion MergeVersion: series scope = {0}", cfg.MergeSeriesScope);
+
+                var tvLibraries = PrepareMergeSeries();
+                foreach (var lib in tvLibraries)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var parents = new[] { lib.InternalId };
+
+                    var duplicates = FindDuplicateSeries(parents);
+                    _logger.Info("StrmCompanion MergeVersion: found {0} duplicate series in '{1}'",
+                        duplicates.Count, lib.Name);
+                    foreach (var series in duplicates)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        await RefreshSeriesAsync(series, ct).ConfigureAwait(false);
+                    }
+
+                    var inconsistent = FindInconsistentSeries(parents);
+                    _logger.Info("StrmCompanion MergeVersion: found {0} inconsistent series in '{1}'",
+                        inconsistent.Count, lib.Name);
+                    foreach (var series in inconsistent)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        await RefreshSeriesAsync(series, ct).ConfigureAwait(false);
+                    }
+                }
+
+                // Merge episode alternate versions in all TV libraries
+                var allTvLibs = GetAllTvLibraries();
+                _logger.Info("StrmCompanion MergeVersion: merging episode versions across {0} TV library(s)", allTvLibs.Count);
+                foreach (var lib in allTvLibs)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    ExecuteMergeEpisodes(new[] { lib.InternalId }, job, ct);
+                }
+            }
+
+            // Phase 2: Movies
+            _jobManager.UpdateProgress(job.JobId, 5, "Processing movies...");
+            _logger.Info("StrmCompanion MergeVersion: movies scope = {0}", Plugin.Instance.Configuration.MergeMoviesScope);
+
+            var movieGroups = PrepareMergeMovies(currentScanLibrary);
+            int total = movieGroups.Length;
+            int processed = 0;
+
+            if (total == 0)
+            {
+                _jobManager.UpdateProgress(job.JobId, 100, "No movie libraries found");
+                _jobManager.CompleteJob(job.JobId);
+                return;
+            }
+
+            foreach (var parents in movieGroups)
+            {
+                ct.ThrowIfCancellationRequested();
+                ExecuteMergeMovies(parents, job, ct);
+                processed++;
+                _jobManager.UpdateProgress(job.JobId,
+                    5 + (double)processed / total * 95.0,
+                    $"Processed {processed}/{total} library group(s)");
+            }
+
+            _jobManager.CompleteJob(job.JobId);
+            _logger.Info("StrmCompanion MergeVersion: complete");
         }
 
         private List<CollectionFolder> PrepareMergeSeries()
@@ -300,7 +370,6 @@ namespace StrmCompanion.MergeVersion
                 IsVirtualItem = false,
                 AncestorIds = parents
             }).OfType<Episode>()
-              .Where(e => !e.IsSecondaryMergedItemInSameFolder)
               .Where(e => e.ProviderIds != null && ProviderKeys.Any(pk =>
               {
                   string v;
@@ -388,7 +457,6 @@ namespace StrmCompanion.MergeVersion
                 IsVirtualItem = false,
                 AncestorIds = parents
             }).OfType<Movie>()
-              .Where(m => !m.IsSecondaryMergedItemInSameFolder)
               .ToList();
 
             var groups = FindMergeGroups(movies.Cast<BaseItem>().ToList());

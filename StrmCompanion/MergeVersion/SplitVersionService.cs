@@ -102,7 +102,6 @@ namespace StrmCompanion.MergeVersion
                     IsVirtualItem = false,
                     Recursive = true
                 }).OfType<Video>()
-                  .Where(v => !v.IsSecondaryMergedItemInSameFolder)
                   .ToList();
 
                 _logger.Info("StrmCompanion SplitVersion: found {0} item(s) to check library-wide ({1})",
@@ -142,7 +141,6 @@ namespace StrmCompanion.MergeVersion
                     IsVirtualItem = false,
                     AncestorIds = new[] { seasonId ?? series.InternalId }
                 }).OfType<Episode>()
-                  .Where(e => !e.IsSecondaryMergedItemInSameFolder)
                   .ToList();
 
                 _logger.Info("StrmCompanion SplitVersion: found {0} episode(s) to check in series {1} (season {2})",
@@ -183,9 +181,12 @@ namespace StrmCompanion.MergeVersion
             try
             {
                 ct.ThrowIfCancellationRequested();
-                body();
-                _jobManager.CompleteJob(job.JobId);
-                _logger.Info("StrmCompanion SplitVersion: complete");
+                using (VersionJobLock.Acquire(_jobManager, job.JobId, ct))
+                {
+                    body();
+                    _jobManager.CompleteJob(job.JobId);
+                    _logger.Info("StrmCompanion SplitVersion: complete");
+                }
             }
             catch (OperationCanceledException)
             {

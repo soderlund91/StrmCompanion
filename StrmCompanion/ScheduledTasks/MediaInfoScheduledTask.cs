@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -24,6 +25,11 @@ namespace StrmCompanion.ScheduledTasks
         public static bool IsRunning { get; private set; }
         private static string _pendingJobId;
         public static void SetPendingJobId(string jobId) => _pendingJobId = jobId;
+
+        // Items queued or being probed by any scan, so the full scan and auto-scan never probe the same item twice.
+        // Static because Emby creates its own instance of this task alongside the one in PluginEntryPoint.
+        private static readonly ConcurrentDictionary<long, byte> _inFlight = new ConcurrentDictionary<long, byte>();
+        public static bool IsInFlight(long itemId) => _inFlight.ContainsKey(itemId);
 
         public MediaInfoScheduledTask(
             ILibraryManager libraryManager,
@@ -72,13 +78,34 @@ namespace StrmCompanion.ScheduledTasks
             var job = (pendingId != null ? jobManager?.GetJob(pendingId) : null)
                       ?? jobManager?.CreateJob("media-info", 0, "Media Info Scan", null, null);
 
+            // Stops on either Emby's task cancel or the job's cancel button.
+            var jobToken = job != null ? jobManager.GetCancellationToken(job.JobId) : CancellationToken.None;
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, jobToken);
+            var scanToken = linkedCts.Token;
+            var claimedIds = new List<long>();
+
             try
             {
+                scanToken.ThrowIfCancellationRequested();
+
                 var config = Plugin.Instance.Configuration;
                 progress.Report(0);
                 jobManager?.UpdateProgress(job?.JobId, 0, "Querying library...");
 
-                var items = QueryPendingItems(config);
+                // Drop entries for items that are gone or got their media info some other way, e.g. on playback.
+                PluginEntryPoint.MediaInfoFailures?.RemoveWhere(id =>
+                {
+                    var failedItem = _libraryManager.GetItemById(id);
+                    return failedItem == null || ItemHasMediaInfo(failedItem);
+                });
+
+                var items = new List<BaseItem>();
+                foreach (var pending in QueryPendingItems(config))
+                {
+                    if (!_inFlight.TryAdd(pending.InternalId, 0)) continue;
+                    claimedIds.Add(pending.InternalId);
+                    items.Add(pending);
+                }
                 int total = items.Count;
 
                 if (total == 0)
@@ -94,15 +121,13 @@ namespace StrmCompanion.ScheduledTasks
                 _logger.Info("StrmCompanion MediaInfo: found {0} items to scan", total);
 
                 int processed = 0;
-                var semaphore = new SemaphoreSlim(
-                    Math.Max(1, config.MediaInfoConcurrency),
-                    Math.Max(1, config.MediaInfoConcurrency));
 
                 var tasks = items.Select(item => Task.Run(async () =>
                 {
+                    IDisposable slot;
                     try
                     {
-                        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                        slot = await MediaInfoProbeLimiter.AcquireAsync(scanToken).ConfigureAwait(false);
                     }
                     catch
                     {
@@ -111,10 +136,11 @@ namespace StrmCompanion.ScheduledTasks
 
                     try
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        await ScanItemCoreAsync(item, job, cancellationToken).ConfigureAwait(false);
+                        scanToken.ThrowIfCancellationRequested();
+                        await ScanItemCoreAsync(item, job, scanToken).ConfigureAwait(false);
                     }
-                    catch (OperationCanceledException) { throw; }
+                    // Only a real cancel stops the scan; a probe timing out is a failure for that item alone.
+                    catch (OperationCanceledException) when (scanToken.IsCancellationRequested) { throw; }
                     catch (Exception ex)
                     {
                         _logger.Warn("StrmCompanion: scan failed for '{0}': {1}", item.Name, ex.Message);
@@ -122,16 +148,21 @@ namespace StrmCompanion.ScheduledTasks
                     }
                     finally
                     {
-                        semaphore.Release();
+                        slot.Dispose();
+                        // Released per item so the stats stop counting it as queued as soon as it is done.
+                        _inFlight.TryRemove(item.InternalId, out _);
                         int current = Interlocked.Increment(ref processed);
                         double pct = (double)current / total * 100.0;
                         progress.Report(pct);
                         jobManager?.UpdateProgress(job?.JobId, pct, $"Scanned {current}/{total}");
                         _logger.Info("StrmCompanion MediaInfo: progress {0}/{1} - {2}", current, total, item.Path);
                     }
-                }, cancellationToken)).ToList();
+                }, scanToken)).ToList();
 
                 await Task.WhenAll(tasks).ConfigureAwait(false);
+
+                // Tasks cancelled while waiting for a slot return normally, so WhenAll alone can miss a cancel.
+                scanToken.ThrowIfCancellationRequested();
 
                 progress.Report(100);
                 jobManager?.CompleteJob(job?.JobId);
@@ -151,6 +182,10 @@ namespace StrmCompanion.ScheduledTasks
             }
             finally
             {
+                // Items a cancelled scan never got to.
+                foreach (var id in claimedIds)
+                    _inFlight.TryRemove(id, out _);
+                PluginEntryPoint.MediaInfoFailures?.Flush();
                 IsRunning = false;
             }
         }
@@ -160,10 +195,18 @@ namespace StrmCompanion.ScheduledTasks
             var item = _libraryManager.GetItemById(itemId);
             if (item == null) return null;
 
+            if (!_inFlight.TryAdd(item.InternalId, 0))
+            {
+                _logger.Debug("StrmCompanion: '{0}' is already queued for a scan, skipping auto-scan", item.Name);
+                return null;
+            }
+
             var jobManager = PluginEntryPoint.JobManager;
             var job = jobManager.CreateJob("media-info", 0, $"Auto-scan: {item.Name}", null, null);
+            job.IsAutoScan = true;
             var token = jobManager.GetCancellationToken(job.JobId);
-            Task.Run(() => RunSingleAsync(job, item, token), token);
+            // Token is deliberately not passed to Task.Run: RunSingleAsync must always run to release the item and end the job.
+            Task.Run(() => RunSingleAsync(job, item, token));
             return job.JobId;
         }
 
@@ -172,12 +215,18 @@ namespace StrmCompanion.ScheduledTasks
             var jobManager = PluginEntryPoint.JobManager;
             try
             {
-                jobManager.UpdateProgress(job.JobId, 0, $"Scanning {item.Name}...");
-                await ScanItemCoreAsync(item, job, token).ConfigureAwait(false);
+                jobManager.SetActivity(job.JobId, "Waiting for a free scan slot...");
+                using (await MediaInfoProbeLimiter.AcquireAsync(token).ConfigureAwait(false))
+                {
+                    token.ThrowIfCancellationRequested();
+                    jobManager.UpdateProgress(job.JobId, 0, $"Scanning {item.Name}...");
+                    await ScanItemCoreAsync(item, job, token).ConfigureAwait(false);
+                }
                 jobManager.CompleteJob(job.JobId);
             }
-            catch (OperationCanceledException) { jobManager.CancelJob(job.JobId); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { jobManager.CancelJob(job.JobId); }
             catch (Exception ex) { jobManager.FailJob(job.JobId, ex.Message); }
+            finally { _inFlight.TryRemove(item.InternalId, out _); }
         }
 
         private async Task ScanItemCoreAsync(BaseItem item, JobInfo job, CancellationToken token)
@@ -192,11 +241,31 @@ namespace StrmCompanion.ScheduledTasks
                 EnableThumbnailImageExtraction = false,
                 ReplaceAllImages               = false
             };
-            await _providerManager
-                .RefreshSingleItem(item, refreshOptions, new BaseItem[0], libraryOptions, token)
-                .ConfigureAwait(false);
+            var failures = PluginEntryPoint.MediaInfoFailures;
+            try
+            {
+                await _providerManager
+                    .RefreshSingleItem(item, refreshOptions, new BaseItem[0], libraryOptions, token)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!token.IsCancellationRequested)
+            {
+                failures?.RecordFailure(item.InternalId, ex.Message, DateTime.UtcNow);
+                throw;
+            }
+
+            // A cancelled refresh may return normally without probing, which must not count as a failure.
+            token.ThrowIfCancellationRequested();
 
             var refreshed = _libraryManager.GetItemById(item.Id);
+            if (refreshed != null)
+            {
+                if (ItemHasMediaInfo(refreshed))
+                    failures?.Clear(item.InternalId);
+                else
+                    failures?.RecordFailure(item.InternalId, "No video stream found", DateTime.UtcNow);
+            }
+
             var refreshedStreams = refreshed?.GetMediaStreams();
             var summary = BuildMediaSummary(refreshed, refreshedStreams);
 
@@ -247,7 +316,7 @@ namespace StrmCompanion.ScheduledTasks
             return parts.Count > 0 ? string.Join(" | ", parts) : "No media info found";
         }
 
-        private string GetItemDisplayName(BaseItem item)
+        internal string GetItemDisplayName(BaseItem item)
         {
             if (item.GetType().Name == "Episode" && item.IndexNumber.HasValue)
             {
@@ -274,19 +343,43 @@ namespace StrmCompanion.ScheduledTasks
 
         private List<BaseItem> QueryPendingItems(PluginConfiguration config)
         {
-            var libraryIds = ParseLibraryIds(config.MediaInfoLibraryIds);
             var query = new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "Movie", "Episode" },
                 IsVirtualItem = false
             };
-            if (libraryIds.Length > 0)
-                query.AncestorIds = libraryIds;
+            if (!ApplyLibraryScope(query, config))
+            {
+                _logger.Info("StrmCompanion MediaInfo: no libraries selected, nothing to scan");
+                return new List<BaseItem>();
+            }
 
-            return _libraryManager.GetItemList(query)
+            var missing = _libraryManager.GetItemList(query)
                 .Where(i => i.Path != null && i.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
                 .Where(i => !ItemHasMediaInfo(i))
                 .ToList();
+
+            var failures = PluginEntryPoint.MediaInfoFailures;
+            if (failures == null) return missing;
+
+            var now = DateTime.UtcNow;
+            var due = missing.Where(i => failures.IsRetryDue(i.InternalId, now)).ToList();
+            if (due.Count < missing.Count)
+                _logger.Info("StrmCompanion MediaInfo: skipping {0} failed item(s) until their retry is due", missing.Count - due.Count);
+            return due;
+        }
+
+        // Restricts a query to the configured libraries. Returns false when no libraries are selected,
+        // in which case nothing is in scope and the query must not be run.
+        public static bool ApplyLibraryScope(InternalItemsQuery query, PluginConfiguration config)
+        {
+            if (config.MediaInfoAllLibraries) return true;
+
+            var libraryIds = ParseLibraryIds(config.MediaInfoLibraryIds);
+            if (libraryIds.Length == 0) return false;
+
+            query.AncestorIds = libraryIds;
+            return true;
         }
 
         public static long[] ParseLibraryIds(string ids)

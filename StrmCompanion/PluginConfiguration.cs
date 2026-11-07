@@ -46,14 +46,26 @@ namespace StrmCompanion
 
         // ── Media Info ──────────────────────────────────────────────────────────
 
-        /// <summary>Comma-separated CollectionFolder InternalIds to include in media info scans. Empty = all libraries.</summary>
+        /// <summary>Comma-separated CollectionFolder InternalIds to include in media info scans. Empty = no libraries, unless MediaInfoAllLibraries is set.</summary>
         public string MediaInfoLibraryIds { get; set; } = string.Empty;
+
+        /// <summary>When true, media info scans cover every library, including ones created later. MediaInfoLibraryIds is ignored but kept.</summary>
+        public bool MediaInfoAllLibraries { get; set; } = false;
 
         /// <summary>Maximum number of .strm files probed simultaneously. Keep low to avoid IPTV rate limiting.</summary>
         public int MediaInfoConcurrency { get; set; } = 2;
 
         /// <summary>When true, automatically probe new .strm items in configured libraries as they are added.</summary>
         public bool MediaInfoAutoScan { get; set; } = false;
+
+        /// <summary>Days before an item is probed again after its first failed attempt.</summary>
+        public int MediaInfoFirstRetryDays { get; set; } = 1;
+
+        /// <summary>Days before an item is probed again after its second failed attempt.</summary>
+        public int MediaInfoSecondRetryDays { get; set; } = 3;
+
+        /// <summary>Days before an item is probed again after its third and every later failed attempt.</summary>
+        public int MediaInfoLaterRetryDays { get; set; } = 7;
 
         // ── Merge Version ────────────────────────────────────────────────────────────
 

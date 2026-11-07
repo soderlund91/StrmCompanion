@@ -42,19 +42,27 @@ namespace StrmCompanion.Jobs
 
         public CancellationToken GetCancellationToken(string jobId)
         {
-            var cts = new CancellationTokenSource();
-            _cancellations[jobId] = cts;
-            return cts.Token;
+            // GetOrAdd so a job cancelled before its worker starts stays cancelled when the worker asks for the token.
+            return _cancellations.GetOrAdd(jobId, _ => new CancellationTokenSource()).Token;
         }
 
         public void UpdateProgress(string jobId, double percent, string activity)
         {
             if (_jobs.TryGetValue(jobId, out var job))
             {
+                // Workers still winding down after a cancel must not flip the job back to Running.
+                if (job.Status == JobStatus.Cancelled) return;
                 job.Status = JobStatus.Running;
                 job.ProgressPercent = Math.Min(100, Math.Max(0, percent));
                 job.CurrentActivity = activity;
             }
+        }
+
+        // Updates the activity text without changing status (e.g. while a queued job waits).
+        public void SetActivity(string jobId, string activity)
+        {
+            if (_jobs.TryGetValue(jobId, out var job))
+                job.CurrentActivity = activity;
         }
 
         public void AddEpisodeResult(string jobId, long episodeId, string message)

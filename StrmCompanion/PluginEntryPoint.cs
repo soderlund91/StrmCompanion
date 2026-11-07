@@ -42,6 +42,7 @@ namespace StrmCompanion
         public static MergeVersionService MergeVersionService { get; private set; }
         public static SplitVersionService SplitVersionService { get; private set; }
         public static MediaInfoScheduledTask MediaInfoTask { get; private set; }
+        public static MediaInfoFailureStore MediaInfoFailures { get; private set; }
         public static ITaskManager TaskManager { get; private set; }
 
         public PluginEntryPoint(
@@ -87,6 +88,16 @@ namespace StrmCompanion
 
             TaskRegistry.Register(introTask);
 
+            MediaInfoFailures = new MediaInfoFailureStore(
+                System.IO.Path.Combine(Plugin.Instance.DataFolderPath, "mediainfo-failures.json"),
+                _jsonSerializer,
+                _logger,
+                () =>
+                {
+                    var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+                    return new[] { cfg.MediaInfoFirstRetryDays, cfg.MediaInfoSecondRetryDays, cfg.MediaInfoLaterRetryDays };
+                });
+
             _mediaInfoTask = new MediaInfoScheduledTask(
                 _libraryManager,
                 _providerManager,
@@ -95,9 +106,8 @@ namespace StrmCompanion
 
             MediaInfoTask = _mediaInfoTask;
 
-            if (Plugin.Instance?.Configuration?.MediaInfoAutoScan == true)
-                _libraryManager.ItemAdded += OnItemAdded;
-
+            // Always subscribed; OnItemAdded checks MediaInfoAutoScan so the setting applies without a restart.
+            _libraryManager.ItemAdded += OnItemAdded;
             _libraryManager.ItemAdded += OnItemAddedForMerge;
 
             _logger.Info("StrmCompanion: {0} analysis task(s) registered", TaskRegistry.GetAll().Count);
@@ -115,6 +125,12 @@ namespace StrmCompanion
 
                 var cfg = Plugin.Instance?.Configuration;
                 if (cfg == null || !cfg.MediaInfoAutoScan) return;
+
+                if (cfg.MediaInfoAllLibraries)
+                {
+                    _mediaInfoTask.StartSingleItemScan(item.InternalId, System.Threading.CancellationToken.None);
+                    return;
+                }
 
                 var configuredIds = MediaInfoScheduledTask.ParseLibraryIds(cfg.MediaInfoLibraryIds);
                 if (configuredIds.Length == 0) return;
@@ -216,6 +232,7 @@ namespace StrmCompanion
             }
 
             JobManager?.CancelAll();
+            MediaInfoFailures?.Dispose();
         }
     }
 }

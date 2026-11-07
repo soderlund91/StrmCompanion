@@ -30,13 +30,25 @@ namespace StrmCompanion.Api
     public class SaveMediaInfoSettings : IReturn<MediaInfoSettingsDto>
     {
         public string MediaInfoLibraryIds { get; set; }
+        public bool MediaInfoAllLibraries { get; set; }
         public int MediaInfoConcurrency { get; set; }
         public bool MediaInfoAutoScan { get; set; }
+        public int MediaInfoFirstRetryDays { get; set; }
+        public int MediaInfoSecondRetryDays { get; set; }
+        public int MediaInfoLaterRetryDays { get; set; }
     }
 
     [Route("/strmcompanion/mediainfo/scan", "POST", Summary = "Start a media info scan job")]
     [Authenticated]
     public class StartMediaInfoScan : IReturn<StartJobResponse> { }
+
+    [Route("/strmcompanion/mediainfo/failed", "GET", Summary = "List items whose media info probe failed")]
+    [Authenticated]
+    public class GetMediaInfoFailed : IReturn<MediaInfoFailedListDto> { }
+
+    [Route("/strmcompanion/mediainfo/failed/retry", "POST", Summary = "Make all failed items due and start a scan")]
+    [Authenticated]
+    public class RetryMediaInfoFailed : IReturn<StartJobResponse> { }
 
     [Route("/strmcompanion/mediainfo/job/{JobId}", "GET", Summary = "Poll media info job status")]
     [Authenticated]
@@ -72,21 +84,44 @@ namespace StrmCompanion.Api
     public class MediaInfoSettingsDto
     {
         public string MediaInfoLibraryIds { get; set; }
+        public bool MediaInfoAllLibraries { get; set; }
         public int MediaInfoConcurrency { get; set; }
         public bool MediaInfoAutoScan { get; set; }
+        public int MediaInfoFirstRetryDays { get; set; }
+        public int MediaInfoSecondRetryDays { get; set; }
+        public int MediaInfoLaterRetryDays { get; set; }
     }
 
     public class MediaInfoStatsDto
     {
+        public MediaInfoStatsRowDto Movies { get; set; } = new MediaInfoStatsRowDto();
+        public MediaInfoStatsRowDto Episodes { get; set; } = new MediaInfoStatsRowDto();
+    }
+
+    public class MediaInfoStatsRowDto
+    {
         public int Total { get; set; }
         public int Scanned { get; set; }
-        public int Pending { get; set; }
-        public int TotalMovies { get; set; }
-        public int ScannedMovies { get; set; }
-        public int PendingMovies { get; set; }
-        public int TotalEpisodes { get; set; }
-        public int ScannedEpisodes { get; set; }
-        public int PendingEpisodes { get; set; }
+        public int NotScanned { get; set; }
+        public int Failed { get; set; }
+        public int Queued { get; set; }
+    }
+
+    public class MediaInfoFailedItemDto
+    {
+        public long ItemId { get; set; }
+        public string Name { get; set; }
+        public string LastError { get; set; }
+        public int FailureCount { get; set; }
+        public string LastAttemptUtc { get; set; }
+        public string NextRetryUtc { get; set; }
+        public bool RetryNow { get; set; }
+    }
+
+    public class MediaInfoFailedListDto
+    {
+        public int TotalCount { get; set; }
+        public List<MediaInfoFailedItemDto> Items { get; set; } = new List<MediaInfoFailedItemDto>();
     }
 
     // ─── Service ─────────────────────────────────────────────────────────────────
@@ -129,24 +164,42 @@ namespace StrmCompanion.Api
         {
             var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
             cfg.MediaInfoLibraryIds = request.MediaInfoLibraryIds?.Trim() ?? string.Empty;
+            cfg.MediaInfoAllLibraries = request.MediaInfoAllLibraries;
             cfg.MediaInfoConcurrency = request.MediaInfoConcurrency >= 1 ? request.MediaInfoConcurrency : 2;
             cfg.MediaInfoAutoScan = request.MediaInfoAutoScan;
+            cfg.MediaInfoFirstRetryDays = ClampRetryDays(request.MediaInfoFirstRetryDays);
+            cfg.MediaInfoSecondRetryDays = ClampRetryDays(request.MediaInfoSecondRetryDays);
+            cfg.MediaInfoLaterRetryDays = ClampRetryDays(request.MediaInfoLaterRetryDays);
             Plugin.Instance?.SaveConfiguration();
             return ToSettingsDto(cfg);
         }
 
-        public object Post(StartMediaInfoScan request)
+        private static int ClampRetryDays(int days) =>
+            Math.Min(Math.Max(days, MediaInfoFailureStore.MinRetryDays), MediaInfoFailureStore.MaxRetryDays);
+
+        public object Post(StartMediaInfoScan request) => StartFullScan();
+
+        public object Post(RetryMediaInfoFailed request)
+        {
+            PluginEntryPoint.MediaInfoFailures?.MakeAllDue();
+            return StartFullScan();
+        }
+
+        private StartJobResponse StartFullScan()
         {
             var jobManager = PluginEntryPoint.JobManager;
             if (jobManager == null)
                 throw new Exception("JobManager is not initialized");
 
+            // Only a running full scan blocks a new one; auto-scan jobs must not.
             var running = jobManager.GetAllJobs()
-                .FirstOrDefault(j => j.TaskId == "media-info" && j.Status == JobStatus.Running);
+                .FirstOrDefault(j => j.TaskId == "media-info" && j.Status == JobStatus.Running && !j.IsAutoScan);
             if (running != null)
                 return new StartJobResponse { JobId = running.JobId };
 
             var job = jobManager.CreateJob("media-info", 0, "Media Info Scan", null, null);
+            // Register the token now so a cancel before the task starts is not lost.
+            jobManager.GetCancellationToken(job.JobId);
             MediaInfoScheduledTask.SetPendingJobId(job.JobId);
             PluginEntryPoint.TaskManager?.QueueScheduledTask<MediaInfoScheduledTask>();
 
@@ -177,67 +230,96 @@ namespace StrmCompanion.Api
 
         public object Get(GetMediaInfoStats request)
         {
-            var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            var libraryIds = MediaInfoScheduledTask.ParseLibraryIds(cfg.MediaInfoLibraryIds);
+            var strmItems = QueryStrmItems();
+            var failures = PluginEntryPoint.MediaInfoFailures;
+            var stats = new MediaInfoStatsDto();
 
+            foreach (var item in strmItems)
+            {
+                var row = item.GetType().Name == "Movie" ? stats.Movies : stats.Episodes;
+                row.Total++;
+
+                // Every item lands in exactly one column, so the columns always add up to Total.
+                if (HasMediaInfo(item)) row.Scanned++;
+                else if (MediaInfoScheduledTask.IsInFlight(item.InternalId)) row.Queued++;
+                else if (failures?.Get(item.InternalId) != null) row.Failed++;
+                else row.NotScanned++;
+            }
+
+            _logger.Info("StrmCompanion stats: movies={0}/{1} scanned, episodes={2}/{3} scanned",
+                stats.Movies.Scanned, stats.Movies.Total, stats.Episodes.Scanned, stats.Episodes.Total);
+
+            return stats;
+        }
+
+        public object Get(GetMediaInfoFailed request)
+        {
+            const int maxItems = 500;
+
+            var failures = PluginEntryPoint.MediaInfoFailures;
+            var result = new MediaInfoFailedListDto();
+            if (failures == null) return result;
+
+            var task = PluginEntryPoint.MediaInfoTask;
+            var failed = QueryStrmItems()
+                .Where(i => !HasMediaInfo(i) && !MediaInfoScheduledTask.IsInFlight(i.InternalId))
+                .Select(i => new { Item = i, Failure = failures.Get(i.InternalId) })
+                .Where(x => x.Failure != null)
+                .OrderByDescending(x => x.Failure.LastAttemptUtcTicks)
+                .ToList();
+
+            result.TotalCount = failed.Count;
+            result.Items = failed
+                .Take(maxItems)
+                .Select(x => new MediaInfoFailedItemDto
+                {
+                    ItemId = x.Item.InternalId,
+                    Name = task != null ? task.GetItemDisplayName(x.Item) : x.Item.Name,
+                    LastError = x.Failure.LastError,
+                    FailureCount = x.Failure.FailureCount,
+                    LastAttemptUtc = x.Failure.GetLastAttemptUtc().ToString("o"),
+                    NextRetryUtc = failures.GetNextRetryUtc(x.Failure).ToString("o"),
+                    RetryNow = x.Failure.RetryNow
+                })
+                .ToList();
+
+            return result;
+        }
+
+        private List<BaseItem> QueryStrmItems()
+        {
+            var cfg = Plugin.Instance?.Configuration ?? new PluginConfiguration();
             var query = new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "Movie", "Episode" },
                 IsVirtualItem = false
             };
-            if (libraryIds.Length > 0)
-                query.AncestorIds = libraryIds;
+            if (!MediaInfoScheduledTask.ApplyLibraryScope(query, cfg))
+                return new List<BaseItem>();
 
-            var allItems = _libraryManager.GetItemList(query).ToList();
-            var strmItems = allItems
+            return _libraryManager.GetItemList(query)
                 .Where(i => i.Path != null && i.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
                 .ToList();
+        }
 
-            _logger.Info("StrmCompanion stats: library query returned {0} items, {1} are .strm files",
-                allItems.Count, strmItems.Count);
-
-            int scannedMovies = 0, totalMovies = 0;
-            int scannedEpisodes = 0, totalEpisodes = 0;
-
+        private static bool HasMediaInfo(BaseItem item)
+        {
             var task = PluginEntryPoint.MediaInfoTask;
-
-            foreach (var item in strmItems)
-            {
-                bool isMovie = item.GetType().Name == "Movie";
-                bool hasMediaInfo = task != null
-                    ? task.ItemHasMediaInfo(item)
-                    : item.GetMediaStreams().Any(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Video);
-
-                if (isMovie) { totalMovies++; if (hasMediaInfo) scannedMovies++; }
-                else         { totalEpisodes++; if (hasMediaInfo) scannedEpisodes++; }
-            }
-
-            _logger.Info("StrmCompanion stats: movies={0}/{1} scanned, episodes={2}/{3} scanned",
-                scannedMovies, totalMovies, scannedEpisodes, totalEpisodes);
-
-            int total   = totalMovies + totalEpisodes;
-            int scanned = scannedMovies + scannedEpisodes;
-
-            return new MediaInfoStatsDto
-            {
-                Total          = total,
-                Scanned        = scanned,
-                Pending        = total - scanned,
-                TotalMovies    = totalMovies,
-                ScannedMovies  = scannedMovies,
-                PendingMovies  = totalMovies - scannedMovies,
-                TotalEpisodes  = totalEpisodes,
-                ScannedEpisodes = scannedEpisodes,
-                PendingEpisodes = totalEpisodes - scannedEpisodes
-            };
+            return task != null
+                ? task.ItemHasMediaInfo(item)
+                : item.GetMediaStreams().Any(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Video);
         }
 
         private static MediaInfoSettingsDto ToSettingsDto(PluginConfiguration cfg) =>
             new MediaInfoSettingsDto
             {
                 MediaInfoLibraryIds = cfg.MediaInfoLibraryIds,
+                MediaInfoAllLibraries = cfg.MediaInfoAllLibraries,
                 MediaInfoConcurrency = cfg.MediaInfoConcurrency,
-                MediaInfoAutoScan = cfg.MediaInfoAutoScan
+                MediaInfoAutoScan = cfg.MediaInfoAutoScan,
+                MediaInfoFirstRetryDays = cfg.MediaInfoFirstRetryDays,
+                MediaInfoSecondRetryDays = cfg.MediaInfoSecondRetryDays,
+                MediaInfoLaterRetryDays = cfg.MediaInfoLaterRetryDays
             };
     }
 }
